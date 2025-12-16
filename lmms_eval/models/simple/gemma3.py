@@ -37,6 +37,7 @@ class Gemma3(lmms):
         pretrained: str = "google/gemma-3-27b-it",
         device: Optional[str] = "cuda",
         device_map: Optional[str] = "auto",
+        dtype="bfloat16",
         batch_size: Optional[Union[int, str]] = 1,
         trust_remote_code: Optional[bool] = True,
         use_cache=True,
@@ -63,7 +64,7 @@ class Gemma3(lmms):
 
         # Prepare model loading arguments
         model_kwargs = {
-            "torch_dtype": torch.bfloat16,
+            "torch_dtype": dtype,
             "device_map": self.device_map,
         }
 

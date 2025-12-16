@@ -1,4 +1,3 @@
 group: mmmu
 task:
 - mmmu_val
-- mmmu_test

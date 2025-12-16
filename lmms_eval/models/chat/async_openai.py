@@ -2,9 +2,10 @@ import asyncio
 import base64
 import json
 import os
-import shutil
 import tempfile
+import time
 import uuid
+from io import BytesIO
 from multiprocessing import cpu_count
 from typing import List, Optional, Tuple, Union
 
@@ -54,10 +55,9 @@ class AsyncOpenAIChat(lmms):
         work_dir: str = None,
         fps: Optional[int] = None,
         nframes: Optional[int] = 64,
-        max_frames: Optional[int] = 768,
+        max_frames: Optional[int] = None,
         max_pixels: Optional[int] = 151200,
         min_pixels: Optional[int] = 28 * 28,
-        is_qwen3_vl: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -78,7 +78,6 @@ class AsyncOpenAIChat(lmms):
         self.max_pixels = max_pixels
         self.min_pixels = min_pixels
         self.max_frames = max_frames
-        self.is_qwen3_vl = is_qwen3_vl
         if mcp_server_path is not None:
             self.mcp_client = MCPClient(mcp_server_path)
             os.makedirs(self.work_dir, exist_ok=True)
@@ -143,10 +142,7 @@ class AsyncOpenAIChat(lmms):
             video_kwargs["nframes"] = self.nframes
         if self.max_frames is not None:
             video_kwargs["max_frames"] = self.max_frames
-        if self.is_qwen3_vl:
-            messages = chat_messages.to_qwen3_vl_openai_messages(video_kwargs)
-        else:
-            messages = chat_messages.to_openai_messages(video_kwargs)
+        messages = chat_messages.to_openai_messages(video_kwargs)
         images, videos, audios = chat_messages.extract_media()
         if self.mcp_client is not None:
             for image_idx, image in enumerate(images):
@@ -249,6 +245,4 @@ class AsyncOpenAIChat(lmms):
         eval_results = asyncio.run(run())
         eval_results.sort(key=lambda x: x[1])  # Sort by index to restore original
         results = results + [content for content, _ in eval_results]
-        if self.mcp_client is not None:
-            shutil.rmtree(self.work_dir)
         return results

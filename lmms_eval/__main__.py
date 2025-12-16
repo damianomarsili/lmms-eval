@@ -229,6 +229,11 @@ def parse_eval_args() -> argparse.Namespace:
         help="Log error when tasks are not registered.",
     )
     parser.add_argument(
+        "--debug_predictions",
+        action="store_true",
+        help="If set, print model predictions as they are generated.",
+    )
+    parser.add_argument(
         "--wandb_args",
         default="",
         help="Comma separated string arguments passed to wandb.init, e.g. `project=lmms-eval,job_type=eval",
@@ -501,6 +506,7 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
         gen_kwargs=args.gen_kwargs,
         task_manager=task_manager,
         verbosity=args.verbosity,
+        debug_predictions=args.debug_predictions,
         predict_only=args.predict_only,
         random_seed=args.seed[0],
         numpy_random_seed=args.seed[1],

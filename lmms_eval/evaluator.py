@@ -74,6 +74,7 @@ def simple_evaluate(
     gen_kwargs: Optional[str] = None,
     task_manager: Optional[TaskManager] = None,
     verbosity: str = "INFO",
+    debug_predictions: bool = False,
     predict_only: bool = False,
     random_seed: int = 0,
     numpy_random_seed: int = 1234,
@@ -128,6 +129,10 @@ def simple_evaluate(
     :param gen_kwargs: str
         String arguments for model generation
         Ignored for all tasks with loglikelihood output_type
+    :param verbosity: str
+        Log level name passed to the evaluator logger.
+    :param debug_predictions: bool
+        If True, print model predictions as they are produced during generation.
     :param predict_only: bool
         If true only model outputs will be generated and returned. Metrics will not be evaluated
     :param random_seed: int
@@ -196,6 +201,10 @@ def simple_evaluate(
         )
     elif isinstance(model, lmms_eval.api.model.lmms):
         lm = model
+    if hasattr(lm, "debug_predictions"):
+        lm.debug_predictions = getattr(lm, "debug_predictions", False) or debug_predictions
+        if lm.debug_predictions:
+            eval_logger.info("Debug prediction logging enabled; streaming model outputs.")
     task_type = "simple" if lm.is_simple else "chat"
     task_dict = get_task_dict(tasks, task_manager, task_type)
 

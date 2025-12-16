@@ -42,6 +42,7 @@ class Qwen2_5_VL(lmms):
         pretrained: str = "Qwen/Qwen2.5-VL-3B-Instruct",
         device: Optional[str] = "cuda",
         device_map: Optional[str] = "auto",
+        dtype="bfloat16",
         batch_size: Optional[Union[int, str]] = 1,
         use_cache=True,
         attn_implementation: Optional[str] = None,
@@ -84,7 +85,7 @@ class Qwen2_5_VL(lmms):
 
         # Prepare model loading arguments
         model_kwargs = {
-            "torch_dtype": "bfloat16",
+            "torch_dtype": dtype,
             "device_map": self.device_map,
         }
 
@@ -282,7 +283,7 @@ class Qwen2_5_VL(lmms):
 
                 batched_messages.append(message)
 
-            texts = self.processor.apply_chat_template(batched_messages, tokenize=False, add_generation_prompt=True)
+            texts = [self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in batched_messages]
             image_inputs, video_inputs = process_vision_info(batched_messages)
             if video_inputs is not None:
                 total_frames = video_inputs[0].shape[0]
@@ -294,8 +295,8 @@ class Qwen2_5_VL(lmms):
                     indices = np.append(indices, total_frames - 1)
                     indices = np.unique(indices)  # Ensure uniqueness again
                 video_inputs[0] = video_inputs[0][indices]
-            padding_side = "left" if self.batch_size > 1 else "right"
-            inputs = self.processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, padding_side=padding_side, return_tensors="pt")
+            inputs = self.processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
+
             if self.device_map == "auto":
                 inputs = inputs.to("cuda")
             else:
@@ -333,14 +334,23 @@ class Qwen2_5_VL(lmms):
 
             generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
             answers = self.processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+            debug_raw_answers = (
+                self.tokenizer.batch_decode(generated_ids_trimmed, skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                if getattr(self, "debug_predictions", False)
+                else None
+            )
+            raw_answers = list(answers)
             for i, ans in enumerate(answers):
                 for term in until:
                     if len(term) > 0:
                         ans = ans.split(term)[0]
                 answers[i] = ans
 
-            for ans, context in zip(answers, contexts):
+            for idx, (raw_ans, ans, context) in enumerate(zip(raw_answers, answers, contexts)):
                 clean_ans = parse_reasoning_model_answer(ans)
+                if getattr(self, "debug_predictions", False):
+                    debug_raw_text = debug_raw_answers[idx] if debug_raw_answers is not None else raw_ans
+                    self._debug_last_raw_output = debug_raw_text.strip()
                 res.append(clean_ans)
                 self.cache_hook.add_partial("generate_until", (context, gen_kwargs), clean_ans)
                 pbar.update(1)

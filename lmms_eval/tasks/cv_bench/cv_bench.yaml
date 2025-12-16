@@ -1,5 +1,27 @@
+include: _default_template_interleave_yaml
 dataset_path: nyu-visionx/CV-Bench
-dataset_name: "default"
-task: "cv_bench"
+dataset_name: default
+dataset_kwargs:
+  token: True
+task: "CV-Bench"
 test_split: test
-include: _default_template_yaml
+doc_to_target: "answer"
+doc_to_visual: !function utils.doc_to_visual
+doc_to_text: !function utils.doc_to_text
+process_results: !function utils.interleave_process_results
+
+metric_list:
+  - metric: overall_score
+    aggregation: !function utils.overall_score
+    higher_is_better: true
+
+generation_kwargs:
+  max_new_tokens: 128
+  temperature: 0
+  do_sample: False
+  image_aspect_ratio: "pad" # keep original multi-image handling.
+
+lmms_eval_specific_kwargs:
+  default:
+    oe_post_prompt: "You MUST ONLY with the letter of one of the options (A, B, C, D, E or F)"
+    mcq_post_prompt: "You MUST ONLY with the letter of one of the options (A, B, C, D, E or F)."

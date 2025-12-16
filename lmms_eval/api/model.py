@@ -34,7 +34,11 @@ class lmms(abc.ABC):
         # set rank and world size to a single process, by default.
         self._rank = 0
         self._world_size = 1
-        self.cache_hook = CacheHook(None)
+        env_debug = os.getenv("LMMS_EVAL_DEBUG_PREDICTIONS", "0").lower()
+        self.debug_predictions = env_debug in {"1", "true", "yes"}
+        self._debug_prediction_counter = 0
+        self._debug_last_raw_output: Optional[str] = None
+        self.cache_hook = CacheHook(None, self)
         self.task_dict = {}
         self.cache_dict = collections.defaultdict(dict)
         self.initialized_cache_dir = False
@@ -319,7 +323,28 @@ class lmms(abc.ABC):
         # not support multi-device parallelism nor expect it.
         return self._world_size
 
+    def _handle_debug_prediction(self, attr: str, req, res) -> None:
+        if not getattr(self, "debug_predictions", False):
+            return
+
+        self._debug_prediction_counter += 1
+        counter = self._debug_prediction_counter
+
+        output = res if isinstance(res, str) else repr(res)
+        raw_output = getattr(self, "_debug_last_raw_output", None)
+        self._debug_last_raw_output = None
+
+        message_lines = [f"[Prediction {counter} | {attr} | rank {self.rank}]"]
+        if raw_output and raw_output != output:
+            message_lines.append("Raw:")
+            message_lines.append(raw_output)
+            message_lines.append("Clean:")
+        message_lines.append(output)
+        eval_logger.info("\n".join(message_lines))
+
     def set_cache_hook(self, cache_hook) -> None:
+        if getattr(cache_hook, "model", None) is None:
+            cache_hook.model = self
         self.cache_hook = cache_hook
 
     def clean(self):
@@ -338,14 +363,21 @@ def hash_args(attr, args):
 
 
 class CacheHook:
-    def __init__(self, cachinglm) -> None:
+    def __init__(self, cachinglm, model=None) -> None:
         if cachinglm is None:
             self.dbdict = None
+            self.model = model
             return
 
         self.dbdict = cachinglm.dbdict
+        self.model = model if model is not None else getattr(cachinglm, "lm", None)
 
     def add_partial(self, attr, req, res) -> None:
+        if self.model is not None:
+            try:
+                self.model._handle_debug_prediction(attr, req, res)
+            except Exception:
+                pass
         if self.dbdict is None:
             return
         hsh = hash_args(attr, req)
@@ -422,4 +454,4 @@ class CachingLMM:
         return fn
 
     def get_cache_hook(self):
-        return CacheHook(self)
+        return CacheHook(self, self.lm)

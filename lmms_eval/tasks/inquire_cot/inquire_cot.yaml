@@ -1,0 +1,36 @@
+dataset_path: json
+dataset_kwargs:
+  data_files:
+    test: lmms_eval/tasks/inquire_cot/data/inquire_cot.jsonl
+task: "inquire_cot"
+test_split: test
+output_type: generate_until
+doc_to_visual: !function utils.inquire_doc_to_visual
+doc_to_text: !function utils.inquire_doc_to_text
+doc_to_target: !function utils.inquire_doc_to_target
+process_results: !function utils.inquire_process_results
+generation_kwargs:
+  max_new_tokens: 1024
+  temperature: 0
+  do_sample: false
+metric_list:
+  - metric: pairwise_total
+    aggregation: !function utils.inquire_pairwise_aggregate
+    higher_is_better: true
+  - metric: multiple_choice_total
+    aggregation: !function utils.inquire_multiple_choice_aggregate
+    higher_is_better: true
+  - metric: overall_total
+    aggregation: !function utils.inquire_overall_aggregate
+    higher_is_better: true
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: ""
+    post_prompt: "You MUST include an explanation AND use the answer tags <answer></answer>."
+metadata:
+  - version: 0.0
+  - source: "evendrow/INQUIRE-Rerank validation split"
+  - pairwise_total: 1000
+  - pairwise_yes: 500
+  - pairwise_no: 500
+  - multiple_choice_total: 1000

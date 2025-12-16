@@ -61,7 +61,7 @@ class PerceptionLM(lmms):
         gen_cfg = dataclass_from_dict(PackedCausalTransformerGeneratorArgs, cfg, strict=False)
         # Load PLM model
         eval_logger.info(f"Lodding PLM model from {cfg.pretrained}")
-        model, tokenizer, config = load_consolidated_model_and_tokenizer(cfg.pretrained)
+        model, tokenizer, config = load_consolidated_model_and_tokenizer(cfg.pretrained, device='cuda')
 
         # Create preprocessors (transforms)
         processor = {}
