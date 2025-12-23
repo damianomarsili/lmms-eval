@@ -1,29 +1,20 @@
 import re
-from pathlib import Path
 from typing import Dict, List
 
 from PIL import Image
 
-TASK_DIR = Path(__file__).resolve().parent
-DATA_DIR = TASK_DIR / "data"
+from lmms_eval.tasks._task_utils.fgvqa_shared import load_images_from_doc, parse_extra, subset_dataset
 
 YES_SET = {"yes", "y", "yeah", "yep", "true", "1"}
 NO_SET = {"no", "n", "nope", "false", "0"}
 
 
-def _resolve_image_path(rel_path: str) -> Path:
-    candidate = DATA_DIR / rel_path
-    if candidate.exists():
-        return candidate
-    return Path(rel_path).expanduser().resolve()
+def inquire_process_docs(dataset):
+    return subset_dataset(dataset, "fgvqa_inquire")
 
 
 def inquire_doc_to_visual(doc: Dict) -> List[Image.Image]:
-    visuals: List[Image.Image] = []
-    for rel_path in doc["image_paths"]:
-        path = _resolve_image_path(rel_path)
-        visuals.append(Image.open(path).convert("RGB"))
-    return visuals
+    return load_images_from_doc(doc)
 
 
 def inquire_doc_to_text(doc: Dict, lmms_eval_specific_kwargs: Dict = None) -> str:
@@ -78,6 +69,7 @@ def _mean(values: List[float]) -> float:
 def inquire_process_results(doc: Dict, results) -> Dict:
     prediction = results[0] if results else ""
     question_type = doc.get("question_type", "pairwise")
+    extra = parse_extra(doc)
 
     if question_type == "pairwise":
         normalized = _extract_tag_answer(prediction)
@@ -91,9 +83,9 @@ def inquire_process_results(doc: Dict, results) -> Dict:
             "model_answer": normalized or prediction.strip().lower(),
             "target": doc["answer"],
             "question_type": question_type,
-            "species": doc.get("species"),
-            "instance_ids": doc.get("instance_ids"),
-            "source_keys": doc.get("source_keys"),
+            "species": extra.get("species"),
+            "instance_ids": extra.get("instance_ids"),
+            "source_keys": extra.get("source_keys"),
         }
 
     normalized = _extract_numeric_answer(prediction)
@@ -107,10 +99,10 @@ def inquire_process_results(doc: Dict, results) -> Dict:
         "model_answer": normalized or prediction.strip().lower(),
         "target": doc["answer"],
         "question_type": question_type,
-        "target_count": doc.get("target_count"),
-        "species": doc.get("species"),
-        "instance_ids": doc.get("instance_ids"),
-        "source_keys": doc.get("source_keys"),
+        "target_count": extra.get("target_count"),
+        "species": extra.get("species"),
+        "instance_ids": extra.get("instance_ids"),
+        "source_keys": extra.get("source_keys"),
     }
 
 

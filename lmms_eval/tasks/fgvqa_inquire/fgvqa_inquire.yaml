@@ -1,9 +1,7 @@
-dataset_path: json
-dataset_kwargs:
-  data_files:
-    test: lmms_eval/tasks/fgvqa_inquire/data/fgvqa_inquire.jsonl
+dataset_path: glab-caltech/FGVQA
 task: "fgvqa_inquire"
 test_split: test
+process_docs: !function utils.inquire_process_docs
 output_type: generate_until
 doc_to_visual: !function utils.inquire_doc_to_visual
 doc_to_text: !function utils.inquire_doc_to_text
@@ -29,7 +27,7 @@ lmms_eval_specific_kwargs:
     post_prompt: "You MUST include an explanation AND use the answer tags <answer></answer>."
 metadata:
   - version: 0.0
-  - source: "evendrow/INQUIRE-Rerank validation split"
+  - source: "glab-caltech/FGVQA (fgvqa_inquire subset)"
   - pairwise_total: 1000
   - pairwise_yes: 500
   - pairwise_no: 500
