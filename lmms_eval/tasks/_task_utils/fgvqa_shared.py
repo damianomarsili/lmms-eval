@@ -6,33 +6,24 @@ from PIL import Image
 
 
 def subset_dataset(dataset, dataset_source: str):
-    """Filter a HF dataset down to a single dataset_source and expand extra metadata."""
+    """Filter a HF dataset down to a single dataset_source."""
 
     if "dataset_source" not in dataset.column_names:
         raise ValueError("FGVQA dataset must include a 'dataset_source' column.")
 
-    dataset = dataset.filter(lambda example, ds=dataset_source: example.get("dataset_source") == ds)
-    dataset = dataset.map(_merge_extra_fields)
-    if "extra" in dataset.column_names:
-        dataset = dataset.remove_columns("extra")
-    return dataset
+    return dataset.filter(lambda example, ds=dataset_source: example.get("dataset_source") == ds)
 
 
-def _merge_extra_fields(example: Dict[str, Any]) -> Dict[str, Any]:
-    extra = example.get("extra")
-    if not extra:
-        return example
+def parse_extra(doc: Dict) -> Dict[str, Any]:
+    extra = doc.get("extra")
     if isinstance(extra, dict):
-        extra_data = extra
-    else:
+        return extra
+    if isinstance(extra, str) and extra:
         try:
-            extra_data = json.loads(extra)
+            return json.loads(extra)
         except json.JSONDecodeError:
-            return example
-    for key, value in extra_data.items():
-        if key not in example or example[key] in (None, "", []):
-            example[key] = value
-    return example
+            return {}
+    return {}
 
 
 def load_images_from_doc(doc: Dict) -> List[Image.Image]:

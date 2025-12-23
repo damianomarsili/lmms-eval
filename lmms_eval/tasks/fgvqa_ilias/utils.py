@@ -3,7 +3,7 @@ from typing import Dict, List
 
 from PIL import Image
 
-from lmms_eval.tasks._task_utils.fgvqa_shared import load_images_from_doc, subset_dataset
+from lmms_eval.tasks._task_utils.fgvqa_shared import load_images_from_doc, parse_extra, subset_dataset
 
 YES_SET = {"yes", "y", "yeah", "yep", "true", "1"}
 NO_SET = {"no", "n", "nope", "false", "0"}
@@ -69,6 +69,7 @@ def _mean(values: List[float]) -> float:
 def ilias_pairmatch_process_results(doc: Dict, results) -> Dict:
     prediction = results[0] if results else ""
     question_type = doc.get("question_type", "pairwise")
+    extra = parse_extra(doc)
 
     if question_type == "pairwise":
         normalized = _extract_tag_answer(prediction)
@@ -82,9 +83,9 @@ def ilias_pairmatch_process_results(doc: Dict, results) -> Dict:
             "model_answer": normalized or prediction.strip().lower(),
             "target": doc["answer"],
             "question_type": question_type,
-            "same_instance": doc.get("same_instance"),
-            "instance_ids": doc.get("instance_ids"),
-            "source_keys": doc.get("source_keys"),
+            "same_instance": extra.get("same_instance"),
+            "instance_ids": extra.get("instance_ids"),
+            "source_keys": extra.get("source_keys"),
         }
 
     normalized = _extract_numeric_answer(prediction)
@@ -98,9 +99,9 @@ def ilias_pairmatch_process_results(doc: Dict, results) -> Dict:
         "model_answer": normalized or prediction.strip().lower(),
         "target": doc["answer"],
         "question_type": question_type,
-        "target_count": doc.get("target_count"),
-        "instance_ids": doc.get("instance_ids"),
-        "source_keys": doc.get("source_keys"),
+        "target_count": extra.get("target_count"),
+        "instance_ids": extra.get("instance_ids"),
+        "source_keys": extra.get("source_keys"),
     }
 
 

@@ -3,7 +3,7 @@ from typing import Dict, List
 
 from PIL import Image
 
-from lmms_eval.tasks._task_utils.fgvqa_shared import load_images_from_doc, subset_dataset
+from lmms_eval.tasks._task_utils.fgvqa_shared import load_images_from_doc, parse_extra, subset_dataset
 
 YES_SET = {"yes", "y", "yeah", "yep", "true", "1"}
 NO_SET = {"no", "n", "nope", "false", "0"}
@@ -69,6 +69,7 @@ def _mean(values: List[float]) -> float:
 def met_process_results(doc: Dict, results) -> Dict:
     prediction = results[0] if results else ""
     question_type = doc.get("question_type", "pairwise")
+    extra = parse_extra(doc)
 
     if question_type == "pairwise":
         normalized = _extract_tag_answer(prediction)
@@ -83,8 +84,8 @@ def met_process_results(doc: Dict, results) -> Dict:
             "parsed": normalized,
             "target": doc["answer"],
             "question_type": question_type,
-            "art_ids": doc.get("art_ids"),
-            "source_paths": doc.get("source_paths"),
+            "art_ids": extra.get("art_ids"),
+            "source_paths": extra.get("source_paths"),
         }
 
     normalized = _extract_numeric_answer(prediction)
@@ -99,9 +100,9 @@ def met_process_results(doc: Dict, results) -> Dict:
         "parsed": normalized,
         "target": doc["answer"],
         "question_type": question_type,
-        "target_count": doc.get("target_count"),
-        "art_ids": doc.get("art_ids"),
-        "source_paths": doc.get("source_paths"),
+        "target_count": extra.get("target_count"),
+        "art_ids": extra.get("art_ids"),
+        "source_paths": extra.get("source_paths"),
     }
 
 
