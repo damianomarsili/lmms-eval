@@ -1,0 +1,8 @@
+group: fgvqa
+task:
+- fgvqa_cub
+- fgvqa_met
+- fgvqa_google_landmarks
+- fgvqa_ilias
+- fgvqa_inquire
+- twin
