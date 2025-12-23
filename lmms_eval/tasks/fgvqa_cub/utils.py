@@ -1,29 +1,20 @@
 import re
-from pathlib import Path
 from typing import Dict, List
 
 from PIL import Image
 
-TASK_DIR = Path(__file__).resolve().parent
-DATA_DIR = TASK_DIR / "data"
+from lmms_eval.tasks._task_utils.fgvqa_shared import load_images_from_doc, subset_dataset
 
 YES_SET = {"yes", "y", "yeah", "yep", "true", "1"}
 NO_SET = {"no", "n", "nope", "false", "0"}
 
 
-def _resolve_image_path(rel_path: str) -> Path:
-    candidate = DATA_DIR / rel_path
-    if candidate.exists():
-        return candidate
-    return Path(rel_path).expanduser().resolve()
+def cub_birds_process_docs(dataset):
+    return subset_dataset(dataset, "fgvqa_cub")
 
 
 def cub_birds_doc_to_visual(doc: Dict) -> List[Image.Image]:
-    visuals: List[Image.Image] = []
-    for rel_path in doc["image_paths"]:
-        path = _resolve_image_path(rel_path)
-        visuals.append(Image.open(path).convert("RGB"))
-    return visuals
+    return load_images_from_doc(doc)
 
 
 def cub_birds_doc_to_text(doc: Dict, lmms_eval_specific_kwargs: Dict = None) -> str:

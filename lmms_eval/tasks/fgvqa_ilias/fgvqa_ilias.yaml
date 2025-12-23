@@ -1,9 +1,7 @@
-dataset_path: json
-dataset_kwargs:
-  data_files:
-    test: lmms_eval/tasks/fgvqa_ilias/data/fgvqa_ilias.jsonl
+dataset_path: glab-caltech/FGVQA
 task: "fgvqa_ilias"
 test_split: test
+process_docs: !function utils.ilias_process_docs
 output_type: generate_until
 doc_to_visual: !function utils.ilias_pairmatch_doc_to_visual
 doc_to_text: !function utils.ilias_pairmatch_doc_to_text
@@ -29,7 +27,7 @@ lmms_eval_specific_kwargs:
     post_prompt: "You MUST include an explanation AND use the answer tags <answer></answer>."
 metadata:
   - version: 0.0
-  - source: "vrg-prague/ilias core_db"
+  - source: "glab-caltech/FGVQA (fgvqa_ilias subset)"
   - positives: 500
   - negatives: 500
   - multi_choice: 1000

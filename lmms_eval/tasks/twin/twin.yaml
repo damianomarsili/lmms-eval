@@ -1,9 +1,7 @@
-dataset_path: json
-dataset_kwargs:
-  data_files:
-    test: lmms_eval/tasks/twin/data/twin.jsonl
+dataset_path: glab-caltech/FGVQA
 task: "twin"
 test_split: test
+process_docs: !function utils.twin_process_docs
 output_type: generate_until
 doc_to_visual: !function utils.twin_doc_to_visual
 doc_to_text: !function utils.twin_doc_to_text
@@ -29,7 +27,7 @@ lmms_eval_specific_kwargs:
     post_prompt: "You MUST include an explanation AND use the answer tags <answer></answer>."
 metadata:
   - version: 0.0
-  - source: "data/rao-test/test"
+  - source: "glab-caltech/FGVQA (twin subset)"
   - pairwise_total: 1000
   - pairwise_yes: 500
   - pairwise_no: 500

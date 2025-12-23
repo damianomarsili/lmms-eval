@@ -1,9 +1,7 @@
-dataset_path: json
-dataset_kwargs:
-  data_files:
-    test: lmms_eval/tasks/fgvqa_google_landmarks/data/fgvqa_google_landmarks.jsonl
+dataset_path: glab-caltech/FGVQA
 task: "fgvqa_google_landmarks"
 test_split: test
+process_docs: !function utils.landmarks_process_docs
 output_type: generate_until
 doc_to_visual: !function utils.google_landmarks_doc_to_visual
 doc_to_text: !function utils.google_landmarks_doc_to_text
@@ -29,7 +27,7 @@ lmms_eval_specific_kwargs:
     post_prompt: "You MUST include an explanation AND use the answer tags <answer></answer>."
 metadata:
   - version: 0.0
-  - source: "zguo0525/google-landmarks-v2-mini train split"
+  - source: "glab-caltech/FGVQA (fgvqa_google_landmarks subset)"
   - pairwise_total: 1000
   - pairwise_yes: 500
   - pairwise_no: 500
