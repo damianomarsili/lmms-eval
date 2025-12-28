@@ -19,6 +19,10 @@ def robospatial_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Opti
     return doc["question"].strip()
 
 
+def robospatial_doc_to_target(doc: Dict[str, Any]) -> str:
+    return str(doc["answer"])
+
+
 def _normalize_yes_no(text: str) -> str:
     cleaned = text.strip().lower()
     if not cleaned:
