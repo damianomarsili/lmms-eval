@@ -115,6 +115,26 @@ def _extract_point(text: str) -> Optional[Tuple[float, float]]:
     return None
 
 
+def _normalize_point_to_unit(point: Tuple[float, float], img: Any) -> Tuple[float, float]:
+    """
+    Normalize pixel coordinates to [0,1] using image width/height when the values
+    fall outside the unit range. Leaves already-normalized coordinates untouched.
+    """
+    x, y = point
+    if 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0:
+        return point
+
+    if img is None or not hasattr(img, "size"):
+        return point
+    try:
+        width, height = img.size
+        if width and height:
+            return (x / float(width), y / float(height))
+    except Exception:
+        pass
+    return point
+
+
 def robospatial_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = results[0] if results else ""
     gt = doc["answer"]
@@ -134,6 +154,8 @@ def robospatial_process_results(doc: Dict[str, Any], results: List[str]) -> Dict
         return {"exact_match": 0.0}
 
     point = _extract_point(prediction.lower())
+    if point is not None:
+        point = _normalize_point_to_unit(point, doc.get("img"))
     if point is None:
         return {"exact_match": 0.0}
 
