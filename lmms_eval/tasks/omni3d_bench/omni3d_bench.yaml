@@ -1,0 +1,40 @@
+dataset_path: dmarsili/Omni3D-Bench
+task: "omni3d_bench"
+test_split: train
+output_type: generate_until
+doc_to_visual: !function utils.omni3d_doc_to_visual
+doc_to_text: !function utils.omni3d_doc_to_text
+doc_to_target: !function utils.omni3d_doc_to_target
+process_results: !function utils.omni3d_process_results
+
+generation_kwargs:
+  max_new_tokens: 4068
+  temperature: 0
+  top_p: 1.0
+  num_beams: 1
+  do_sample: false
+
+metric_list:
+  - metric: omni3d_yes_no
+    aggregation: !function utils.omni3d_aggregate_yes_no
+    higher_is_better: true
+  - metric: omni3d_multi
+    aggregation: !function utils.omni3d_aggregate_multi
+    higher_is_better: true
+  - metric: omni3d_num_ct
+    aggregation: !function utils.omni3d_aggregate_num_ct
+    higher_is_better: true
+  - metric: omni3d_num_other
+    aggregation: !function utils.omni3d_aggregate_num_other
+    higher_is_better: true
+  - metric: omni3d_overall
+    aggregation: !function utils.omni3d_aggregate_overall
+    higher_is_better: true
+
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: ""
+    post_prompt: "Ensure that the answer is either yes/no, one word, or one number. Do not round answers, express all ratios as unrounded decimals. Nothing else."
+
+metadata:
+  - version: 0.0
