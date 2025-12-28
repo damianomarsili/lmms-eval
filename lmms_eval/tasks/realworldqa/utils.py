@@ -32,15 +32,29 @@ def realworldqa_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
 
 def realworldqa_process_results(doc, results):
-    pred = results[0].lower().strip().rstrip(".")
-    gt_ans = doc["answer"].lower().strip()
+    """
+    Score answers with awareness of the target type:
+    - If the target is a single letter (e.g., multiple choice), compare only the first letter from the model output.
+    - Otherwise, fall back to an exact (lowercased, trimmed) comparison.
+    """
+    raw_pred = results[0]
+    target = str(doc["answer"]).strip()
 
-    print(f"Prediction: {pred}, Ground Truth: {gt_ans}")
-    # assert gt_ans in ["a", "b", "c", "d"]
+    if len(target) == 1:
+        # Single-letter target (e.g., A/B/C/D): use the first alpha character from the prediction
+        match = re.search(r"([A-Z])", raw_pred, re.IGNORECASE)
+        if match:
+            pred = match.group(1).lower()
+        else:
+            pred = raw_pred.lower().strip().rstrip(".")
+        gt_ans = target.lower()
+    else:
+        # Non-letter targets: do a simple normalized string compare
+        pred = raw_pred.lower().strip().rstrip(".")
+        gt_ans = target.lower()
+
     score = 1.0 if pred == gt_ans else 0.0
-    return {
-        "exact_match": score,
-    }
+    return {"exact_match": score}
 
 
 class NumberWordsToDigitsFilter(MapFilter):
@@ -88,6 +102,8 @@ class MultiChoiceRegexFilter(ExtendedRegexFilter):
             multiple_choices_regex = re.compile(r"\b([A-Z])\.\s+([^\n]*)")
             matches = multiple_choices_regex.findall(doc["question"])
 
+            has_choices = len(matches) > 0
+
             # Build regex patterns and mappings for each choice
             for m in matches:
                 choice_text = m[1].strip()
@@ -97,20 +113,34 @@ class MultiChoiceRegexFilter(ExtendedRegexFilter):
                 next_alpha = chr(ord(next_alpha) + 1)
 
             # Compile regex to match any of the extracted choices
-            fallback_regex = re.compile("|".join(fallback_regexes))
+            fallback_regex = re.compile("|".join(fallback_regexes)) if fallback_regexes else None
 
             # Process each response
             filtered = []
             for resp in r:
+                # If the question has no explicit choices, keep the response as-is (trimmed)
+                if not has_choices:
+                    filtered.append(resp.strip())
+                    continue
+
+                # Fast path: if a standalone choice letter (A-D/a-d) appears, use it directly
+                letter_match = re.search(r"\b([A-D])\b", resp, flags=re.IGNORECASE)
+                if letter_match:
+                    filtered.append(letter_match.group(1).upper())
+                    continue
+
                 # Remove any punctuation and extra spaces
                 cleaned_resp = re.sub(r"[^\w\s]", "", resp).strip()
-                # Try to match cleaned response with the choice text
-                match = fallback_regex.search(cleaned_resp)
+                if fallback_regex:
+                    match = fallback_regex.search(cleaned_resp)
+                else:
+                    match = None
+
                 if match and match.group() in choice_to_alpha:
                     # Map the matched choice text back to its corresponding letter
                     filtered.append(choice_to_alpha[match.group()])
                 else:
-                    # If no match, return the cleaned response
+                    # If no match, return the cleaned response untouched (no first-letter forcing)
                     filtered.append(cleaned_resp)
 
             filtered_resps.append(filtered[0])
