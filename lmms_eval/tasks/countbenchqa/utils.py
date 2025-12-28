@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, Optional
 
 
@@ -23,3 +24,23 @@ def countbenchqa_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Opt
 
 def countbenchqa_doc_to_target(doc: Dict[str, Any]) -> str:
     return str(doc["number"])
+
+
+def _extract_last_int(text: str) -> Optional[int]:
+    matches = re.findall(r"-?\d+", text)
+    if not matches:
+        return None
+    try:
+        return int(matches[-1])
+    except ValueError:
+        return None
+
+
+def countbenchqa_process_results(doc: Dict[str, Any], results: list[str]) -> Dict[str, float]:
+    """
+    Accept model free-form output and grade by the last integer it contains.
+    """
+    prediction_raw = results[0]
+    pred_int = _extract_last_int(prediction_raw)
+    gold_int = doc["number"]
+    return {"exact_match": 1.0 if pred_int is not None and pred_int == gold_int else 0.0}
