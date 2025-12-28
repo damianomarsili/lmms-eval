@@ -2,6 +2,5 @@ group: robospatial
 task:
   - robospatial_configuration
   - robospatial_compatibility
-  - robospatial_context
 aggregate_metric_list:
   - metric: exact_match
