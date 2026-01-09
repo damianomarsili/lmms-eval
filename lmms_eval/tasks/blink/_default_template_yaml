@@ -18,4 +18,4 @@ lmms_eval_specific_kwargs:
     post_prompt: ""
 
 generation_kwargs:
-  max_new_tokens: 4068
+  max_new_tokens: 8192

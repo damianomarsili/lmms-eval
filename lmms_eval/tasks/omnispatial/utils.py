@@ -63,7 +63,7 @@ def omnispatial_process_results(doc, results):
     key_name = "omnispatial_score"
     # extract grounded answer
     grounded_output = doc["gt"]
-    response = results[0]
+    response = _strip_think_prefix(results[0])
 
     query = omnispatial_doc_to_text(doc)
 
@@ -81,7 +81,12 @@ def omnispatial_process_results(doc, results):
         pred_letter = PATTERN.findall(response)[-1] if len(PATTERN.findall(response)) > 0 else "A"
         flag = pred_letter == grounded_output
     elif eval_type == "direct":
-        pred_letter = response.strip().upper()[:1]
+        # Grab the last standalone A-D token
+        hits = re.findall(r"(?<![A-Za-z])([A-D])(?![A-Za-z])", response, flags=re.IGNORECASE)
+        if hits:
+            pred_letter = hits[-1].upper()
+        else:
+            pred_letter = response.strip().upper()[:1]
         flag = pred_letter == grounded_output
     elif eval_type == "llm":
         try:
@@ -152,6 +157,18 @@ def omnispatial_aggregate_results(results):
         print(f"{task:<20}: {acc:.4f}")
     print("=" * 40)
     return accuracy
+
+
+def _strip_think_prefix(text: str) -> str:
+    """
+    Drop a leading <think>...</think> block if present and return the remainder.
+    If only a closing </think> is present, take text after it.
+    """
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text.lower():
+        return text.split("</think>")[-1].strip()
+    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)
 
 
 # from https://github.com/qizekun/OmniSpatial

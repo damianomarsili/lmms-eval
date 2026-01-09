@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 from typing import List
 
 from datasets import Dataset
@@ -44,6 +45,20 @@ class FilterEnsemble:
 
     def apply(self, instances: List[Instance], docs: List[Dataset]) -> None:
         resps = [inst.resps for inst in instances]  # operate just on the model responses
+
+        def strip_think_suffix(text):
+            if not isinstance(text, str):
+                return text
+            if re.search(r"</think>", text, flags=re.IGNORECASE):
+                return re.split(r"</think>", text, flags=re.IGNORECASE)[-1].strip()
+            return text
+
+        def strip_think_from_resps(resp_list):
+            if isinstance(resp_list, (list, tuple)):
+                return [strip_think_suffix(r) for r in resp_list]
+            return strip_think_suffix(resp_list)
+
+        resps = [strip_think_from_resps(r) for r in resps]
         for f in self.filters:
             # apply filters in sequence
             resps = f.apply(resps, docs)

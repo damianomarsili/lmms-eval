@@ -8,7 +8,7 @@ doc_to_target: !function utils.countbenchqa_doc_to_target
 process_results: !function utils.countbenchqa_process_results
 
 generation_kwargs:
-  max_new_tokens: 16
+  max_new_tokens: 8192
   temperature: 0
   top_p: 1.0
   num_beams: 1

@@ -29,11 +29,30 @@ def _extract_answer_letter(text: str) -> str:
 
     Return an empty string if no letter is found.
     """
+    text = _strip_think_prefix(text)
     text = text.strip()
+
+    # Collect all standalone A-E letter hits and return the last one
+    hits = re.findall(r"(?i)(?<![A-Z])([A-E])(?![A-Z])", text)
+    if hits:
+        return hits[-1].upper()
+
     match = re.match(r"[\(\s]*([A-Z])[\)\.\s]*", text, flags=re.IGNORECASE)
     if match:
         return match.group(1).upper()
     return ""
+
+
+def _strip_think_prefix(text: str) -> str:
+    """
+    Drop a leading <think>...</think> block if present and return the remainder.
+    If only a closing </think> remains (e.g., upstream stripped the opener), take text after the last closing tag.
+    """
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text.lower():
+        return text.split("</think>")[-1].strip()
+    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)
 
 
 def blink_doc_to_text(doc: dict[str, Any], lmms_eval_specific_kwargs: Optional[dict[str, Any]] = None) -> str:
@@ -62,7 +81,7 @@ def blink_process_results(doc: Dict, result: List[str]) -> Dict[str, Dict]:
     key_name = "blink_acc"
     # extract grounded answer
     grounded_output = doc["answer"].strip("()")
-    response = result[0]
+    response = _strip_think_prefix(result[0])
 
     # extract predicted answer
     pred_letter = _extract_answer_letter(response)

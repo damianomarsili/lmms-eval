@@ -27,6 +27,7 @@ def countbenchqa_doc_to_target(doc: Dict[str, Any]) -> str:
 
 
 def _extract_last_int(text: str) -> Optional[int]:
+    text = _strip_think_prefix(text)
     matches = re.findall(r"-?\d+", text)
     if not matches:
         return None
@@ -40,7 +41,19 @@ def countbenchqa_process_results(doc: Dict[str, Any], results: list[str]) -> Dic
     """
     Accept model free-form output and grade by the last integer it contains.
     """
-    prediction_raw = results[0]
+    prediction_raw = _strip_think_prefix(results[0])
     pred_int = _extract_last_int(prediction_raw)
     gold_int = doc["number"]
     return {"exact_match": 1.0 if pred_int is not None and pred_int == gold_int else 0.0}
+
+
+def _strip_think_prefix(text: str) -> str:
+    """
+    Drop a leading <think>...</think> block if present and return the remainder.
+    If only a closing </think> is present, take text after it.
+    """
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text.lower():
+        return text.split("</think>")[-1].strip()
+    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)

@@ -9,7 +9,7 @@ doc_to_text: !function utils.realworldqa_doc_to_text
 doc_to_target: "answer"
 
 generation_kwargs:
-  max_new_tokens: 4068
+  max_new_tokens: 8192
   temperature: 0
   top_p: 1.0
   num_beams: 1

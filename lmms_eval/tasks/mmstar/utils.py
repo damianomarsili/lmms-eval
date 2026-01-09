@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import re
 from collections import defaultdict
 
 from loguru import logger as eval_logger
@@ -40,17 +41,25 @@ def mmstar_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 def exact_match(pred, gt):
     """Brought from MMStar"""
     answer = gt.lower().replace("\n", " ").strip()
-    predict = pred.lower().replace("\n", " ").strip()
+    predict_raw = _strip_think_prefix(pred).lower().replace("\n", " ").strip()
+
+    # If answer is a single char, look for the last standalone letter in the prediction
+    if len(answer) == 1:
+        hits = re.findall(r"(?<![a-z])([a-z])(?![a-z])", predict_raw, flags=re.IGNORECASE)
+        if hits:
+            if hits[-1] == answer:
+                return 1.0
+
     try:
-        if answer == predict[0]:
+        if answer == predict_raw[0]:
             return 1.0
-        elif predict[0] == "(" and answer == predict[1]:
+        elif predict_raw[0] == "(" and answer == predict_raw[1]:
             return 1.0
-        elif predict[0:7] == "option " and answer == predict[7]:
+        elif predict_raw[0:7] == "option " and answer == predict_raw[7]:
             return 1.0
-        elif predict[0:14] == "the answer is " and answer == predict[14]:
+        elif predict_raw[0:14] == "the answer is " and answer == predict_raw[14]:
             return 1.0
-    except Exception as e:
+    except Exception:
         return 0.0
     return 0.0
 
@@ -63,7 +72,7 @@ def mmstar_process_results(doc, results):
     Returns:
         a dictionary with key: metric name, value: metric value
     """
-    pred = results[0]
+    pred = _strip_think_prefix(results[0])
     gt = doc["answer"]
 
     score = exact_match(pred, gt)
@@ -93,3 +102,14 @@ def mmstar_aggregate_results(results):
 
     avg_score = sum(l2_category_avg_score.values()) / len(l2_category_avg_score)
     return avg_score
+
+
+def _strip_think_prefix(text: str) -> str:
+    """
+    Drop a leading <think>...</think> block if present. If only a closing </think> is present, take text after it.
+    """
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text.lower():
+        return text.split("</think>")[-1].strip()
+    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)

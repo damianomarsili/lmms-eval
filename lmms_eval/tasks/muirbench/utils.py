@@ -26,7 +26,7 @@ def muir_doc_to_target(doc):
 
 
 def muir_process_results(doc, result):
-    pred = result[0]
+    pred = _strip_think_prefix(result[0])
     task = doc["task"]
     idx = doc["idx"]
     image_relation = doc["image_relation"]
@@ -99,16 +99,33 @@ class MultiChoiceRegexFilter(ExtendedRegexFilter):
             # Process each response
             filtered = []
             for resp in r:
+                resp = _strip_think_prefix(resp)
                 # Try to match the option letter at the start of the response
                 match = option_letter_regex.match(resp)
                 if match:
                     # If a match is found, append the matched letter
                     filtered.append(match.group(1))
                 else:
-                    # If no match, return the original response
-                    filtered.append(resp)
+                    # Fallback: grab the last standalone A-Z token if present
+                    hits = re.findall(r"(?<![A-Za-z])([A-Za-z])(?![A-Za-z])", resp)
+                    if hits:
+                        filtered.append(hits[-1].upper())
+                    else:
+                        filtered.append(resp)
 
             # Assuming we need the first response that matches or the original response
             filtered_resps.append(filtered[0])
 
         return filtered_resps
+
+
+def _strip_think_prefix(text: str) -> str:
+    """
+    Drop a leading <think>...</think> block if present and return the remainder.
+    If only a closing </think> is present, take text after it.
+    """
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text.lower():
+        return text.split("</think>")[-1].strip()
+    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)

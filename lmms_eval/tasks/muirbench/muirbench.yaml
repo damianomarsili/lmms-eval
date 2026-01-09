@@ -16,7 +16,7 @@ lmms_eval_specific_kwargs:
 
 
 generation_kwargs:
-  max_new_tokens: 16
+  max_new_tokens: 8192
   temperature: 0
   do_sample: False
 

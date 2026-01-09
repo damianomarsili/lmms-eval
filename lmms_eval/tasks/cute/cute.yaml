@@ -1,0 +1,32 @@
+dataset_path: data/lmms_eval_cute
+dataset_kwargs:
+  load_from_disk: true
+task: "cute"
+test_split: test
+process_docs: !function utils.cute_process_docs
+output_type: generate_until
+doc_to_visual: !function utils.cute_doc_to_visual
+doc_to_text: !function utils.cute_doc_to_text
+doc_to_target: !function utils.cute_doc_to_target
+process_results: !function utils.cute_process_results
+generation_kwargs:
+  max_new_tokens: 1024
+  temperature: 0
+  do_sample: false
+metric_list:
+  - metric: pairwise_total
+    aggregation: !function utils.cute_pairwise_aggregate
+    higher_is_better: true
+  - metric: overall_total
+    aggregation: !function utils.cute_overall_aggregate
+    higher_is_better: true
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: ""
+    post_prompt: "You MUST include an explanation AND use the answer tags <answer></answer>."
+metadata:
+  - version: 0.0
+  - source: "local/CUTE (in_the_wild pairwise)"
+  - pairwise_total: 500
+  - pairwise_yes: 250
+  - pairwise_no: 250

@@ -14,6 +14,17 @@ _LABEL_PATTERNS = [
     r"^\s*([A-Za-z])\s*$",  # just a single letter like "C"
 ]
 
+
+def _strip_think_prefix(text: Optional[str]) -> Optional[str]:
+    """
+    Drop a leading <think>...</think> block if present. If only a closing </think> is present, take text after it.
+    """
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text.lower():
+        return text.split("</think>")[-1].strip()
+    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)
+
 def doc_to_visual(doc):
     image = doc["image"]
     if isinstance(image, Image.Image):
@@ -50,6 +61,7 @@ def _extract_label(text: Optional[str], valid_labels: Iterable[str]) -> Optional
       5) Token-level isolated single letter elsewhere: ... C ...
       6) Fallback: if the entire cleaned output equals a label
     """
+    text = _strip_think_prefix(text)
     if not isinstance(text, str):
         return None
     valid_labels = set(valid_labels)
@@ -100,7 +112,7 @@ def interleave_process_results(doc, results):
     choices = list(doc["choices"])
     choice_mapping = _choice_map(choices)
     gold_label = _resolve_label(doc["answer"], choice_mapping)
-    pred_raw = results[0] if results else ""
+    pred_raw = _strip_think_prefix(results[0] if results else "")
     pred_label = _resolve_label(pred_raw, choice_mapping)
     correct = int(gold_label is not None and pred_label == gold_label)
     return {

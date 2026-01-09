@@ -81,6 +81,16 @@ def escaped_split(text, sep_char, maxsplit=-1):
 
 
 def handle_arg_string(arg):
+    arg = arg.strip()
+    # Try JSON parsing for dict/list/quoted scalars
+    if arg.startswith("{") or arg.startswith("[") or (
+        len(arg) >= 2 and arg[0] in {'"', "'"} and arg[-1] == arg[0]
+    ):
+        try:
+            return json.loads(arg)
+        except Exception:
+            pass
+
     if arg.lower() == "true":
         return True
     elif arg.lower() == "false":
@@ -123,8 +133,48 @@ def simple_parse_args_string(args_string):
     args_string = args_string.strip()
     if not args_string:
         return {}
-    arg_list = [arg for arg in args_string.split(",") if arg]
-    args_dict = {k: handle_arg_string(v) for k, v in [arg.split("=") for arg in arg_list]}
+
+    # Split on commas while respecting nested braces/brackets/parentheses and quotes.
+    args = []
+    current = []
+    depth = 0
+    in_quote = None
+    escape = False
+    for ch in args_string:
+        if escape:
+            current.append(ch)
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if in_quote:
+            if ch == in_quote:
+                in_quote = None
+            current.append(ch)
+            continue
+        if ch in ("'", '"'):
+            in_quote = ch
+            current.append(ch)
+            continue
+        if ch in "{[(":
+            depth += 1
+            current.append(ch)
+            continue
+        if ch in "}])":
+            depth = max(depth - 1, 0)
+            current.append(ch)
+            continue
+        if ch == "," and depth == 0:
+            args.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    if current:
+        args.append("".join(current))
+
+    arg_list = [arg for arg in args if arg]
+    args_dict = {k: handle_arg_string(v) for k, v in [arg.split("=", 1) for arg in arg_list]}
     return args_dict
 
 

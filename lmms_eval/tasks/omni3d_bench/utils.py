@@ -29,6 +29,7 @@ def omni3d_doc_to_target(doc: Dict[str, Any]) -> str:
 
 
 def _normalize_yes_no(text: str) -> str:
+    text = _strip_think_prefix(text)
     cleaned = text.strip().lower()
     if not cleaned:
         return ""
@@ -45,6 +46,7 @@ def _normalize_yes_no(text: str) -> str:
 
 
 def _extract_last_number(text: str) -> Optional[float]:
+    text = _strip_think_prefix(text)
     matches = re.findall(r"-?\d+(?:\.\d+)?", text)
     if not matches:
         return None
@@ -64,7 +66,7 @@ def _mra_score(gt: float, pred: float) -> float:
 
 
 def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, Optional[float]]:
-    prediction = results[0] if results else ""
+    prediction = _strip_think_prefix(results[0] if results else "")
     ans_type = str(doc.get("answer_type", "")).lower()
     gt_raw = str(doc.get("answer", "")).strip()
 
@@ -149,3 +151,15 @@ def omni3d_aggregate_num_other(results: List[Optional[float]]) -> float:
 
 def omni3d_aggregate_overall(results: List[Optional[float]]) -> float:
     return _mean_ignore_none(results)
+
+
+def _strip_think_prefix(text: str) -> str:
+    """
+    Drop a leading <think>...</think> block if present.
+    If only a closing </think> is present, take text after it.
+    """
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text.lower():
+        return text.split("</think>")[-1].strip()
+    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)

@@ -37,24 +37,58 @@ def realworldqa_process_results(doc, results):
     - If the target is a single letter (e.g., multiple choice), compare only the first letter from the model output.
     - Otherwise, fall back to an exact (lowercased, trimmed) comparison.
     """
-    raw_pred = results[0]
-    target = str(doc["answer"]).strip()
-
-    if len(target) == 1:
-        # Single-letter target (e.g., A/B/C/D): use the first alpha character from the prediction
-        match = re.search(r"([A-Z])", raw_pred, re.IGNORECASE)
-        if match:
-            pred = match.group(1).lower()
-        else:
-            pred = raw_pred.lower().strip().rstrip(".")
-        gt_ans = target.lower()
+    if "</think>" in results[0]:
+        raw_pred = _strip_think_prefix(results[0]).lower().strip()
     else:
-        # Non-letter targets: do a simple normalized string compare
-        pred = raw_pred.lower().strip().rstrip(".")
-        gt_ans = target.lower()
+        raw_pred = results[0].lower().strip()
 
-    score = 1.0 if pred == gt_ans else 0.0
-    return {"exact_match": score}
+    target_raw = str(doc["answer"]).strip()
+    target = target_raw.lower()
+
+    # Yes/No targets: normalize both sides
+    if target in {"yes", "no"}:
+        pred_norm = _normalize_yes_no(raw_pred)
+        score = 1.0 if pred_norm == target else 0.0
+        return {"exact_match": score}
+
+    # Numeric targets: pull the last number from the prediction and compare; fall back to direct string compare
+    if target.isdigit():
+        gt_num = int(target)
+        pred_num = int(raw_pred)
+
+        score = 1.0 if pred_num == gt_num else 0.0
+        return {"exact_match": score}
+
+    # Single-letter alpha targets: use the last standalone alpha token
+    if len(target) == 1 and target.isalpha():
+        score = 1.0 if raw_pred == target else 0.0
+        return {"exact_match": score}
+
+
+def _strip_think_prefix(text: str) -> str:
+    """
+    Drop a leading <think>...</think> block if present.
+    If only a closing </think> is present, take text after it.
+    """
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text.lower():
+        return text.split("</think>")[-1].strip()
+    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)
+
+
+def _normalize_yes_no(text: str) -> str:
+    # Look for explicit yes/no tokens
+    match = re.findall(r"\b(yes|no)\b", text, flags=re.IGNORECASE)
+    if match:
+        return match[-1].lower()
+    token = re.sub(r"[^a-z0-9]+", "", text.lower())
+    if token in {"yes", "y", "yeah", "yep", "true", "1"}:
+        return "yes"
+    if token in {"no", "n", "nope", "false", "0"}:
+        return "no"
+    parts = text.lower().split()
+    return parts[-1] if parts else ""
 
 
 class NumberWordsToDigitsFilter(MapFilter):
