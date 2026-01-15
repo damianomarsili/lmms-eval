@@ -1,0 +1,31 @@
+You will be given a visual reasoning query.
+You MUST follow this protocol and output only tagged content. 
+Alternate steps of the following type (repeat as needed):
+a) object detection: {}
+b) text-based reasoning: <plan>text-based reasoning to solve the query or plan next steps</plan>
+
+For example:
+<loc> ... </loc> 
+<plan> ... </plan> 
+<loc> ... </loc> 
+<plan> ... </plan> 
+<answer> ... </answer>
+
+Rules:
+- Locate all required objects BEFORE reasoning over them.
+- Do not reason about sizes, distances, or ratios until you have located the relevant objects.
+- Each object should be located only once. Never repeat an object in <loc>.
+- Make your reasoning in <plan>...</plan> tags explicit, think step by step and show your work.
+- All questions that ask for measurements are asking for 3D measurements, not 2D.
+- Close all of your tags </plan> and </loc> before continuing to the next step.
+- As soon as you have enough information, you must predict the answer <answer>...</answer>
+- You should NOT repeat steps.
+
+
+Before answering, think step by step and explicitly in <plan>...</plan> and then output a single <answer>...</answer>. 
+All calculations must be written explicitly, show all of your work.
+Do not continue with more rounds after the answer.
+Always answer the question, never respond "I can't answer" - always give your best answer.
+
+The query: 
+{}

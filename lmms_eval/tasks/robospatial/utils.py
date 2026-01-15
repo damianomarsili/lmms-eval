@@ -138,6 +138,10 @@ def _normalize_point_to_unit(point: Tuple[float, float], img: Any) -> Tuple[floa
 
 def robospatial_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = _strip_think_prefix(results[0] if results else "")
+    if "<answer>" in prediction:
+        match = re.search(r"<answer>(.*?)</answer>", prediction, re.DOTALL)
+        prediction = match.group(1).strip() if match else prediction
+
     gt = doc["answer"]
 
     if doc.get("category", "").lower() in {"compatibility", "configuration"} or gt.strip().lower() in {"yes", "no"}:
@@ -166,11 +170,11 @@ def robospatial_process_results(doc: Dict[str, Any], results: List[str]) -> Dict
 
 def _strip_think_prefix(text: str) -> str:
     """
-    Drop a leading <think>...</think> block if present and return the remainder.
-    If only a closing </think> is present, take text after it.
+    Drop a leading <plan>...</plan> or <think>...</think> block if present and return the remainder.
+    If only a closing tag is present, take text after it.
     """
     if not isinstance(text, str):
         return text
-    if "</think>" in text.lower():
-        return text.split("</think>")[-1].strip()
-    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)
+    if re.search(r"</(?:plan|think)>", text, flags=re.IGNORECASE):
+        return re.split(r"</(?:plan|think)>", text, flags=re.IGNORECASE)[-1].strip()
+    return re.sub(r"(?is)^\s*<(?:plan|think)>.*?</(?:plan|think)>\s*", "", text, count=1)

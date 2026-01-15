@@ -514,6 +514,17 @@ def evaluate(
         # run requests through model
         resps = getattr(lm, reqtype)(cloned_reqs)  # Choiszt run generate until
 
+        generation_metadata = getattr(lm, "last_generation_metadata", None)
+        if generation_metadata is not None:
+            if len(generation_metadata) != len(cloned_reqs):
+                raise ValueError(
+                    "Generation metadata length does not match responses: "
+                    f"{len(generation_metadata)} metadata entries for {len(cloned_reqs)} requests."
+                )
+            for metadata, req in zip(generation_metadata, cloned_reqs):
+                req.generation_metadata = metadata
+            lm.last_generation_metadata = None
+
         # put responses from model into a list of length K for each request.
         for x, req in zip(resps, cloned_reqs):
             req.resps.append(x)
@@ -604,6 +615,12 @@ def evaluate(
                         ),
                         # Removing prompt hash and target hash here
                     }
+                    generation_metadata = []
+                    for req in requests:
+                        if hasattr(req, "generation_metadata"):
+                            generation_metadata.append(req.generation_metadata)
+                    if generation_metadata:
+                        example["generation_metadata"] = generation_metadata
                     example.update(metrics)
                     task_output.logged_samples.append(example)
                 for metric, value in metrics.items():

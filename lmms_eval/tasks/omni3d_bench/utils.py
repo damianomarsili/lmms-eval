@@ -67,6 +67,10 @@ def _mra_score(gt: float, pred: float) -> float:
 
 def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, Optional[float]]:
     prediction = _strip_think_prefix(results[0] if results else "")
+    if "<answer>" in prediction:
+        match = re.search(r"<answer>(.*?)</answer>", prediction, re.DOTALL)
+        prediction = match.group(1).strip() if match else prediction
+
     ans_type = str(doc.get("answer_type", "")).lower()
     gt_raw = str(doc.get("answer", "")).strip()
 
@@ -155,11 +159,11 @@ def omni3d_aggregate_overall(results: List[Optional[float]]) -> float:
 
 def _strip_think_prefix(text: str) -> str:
     """
-    Drop a leading <think>...</think> block if present.
-    If only a closing </think> is present, take text after it.
+    Drop a leading <plan>...</plan> or <think>...</think> block if present.
+    If only a closing tag is present, take text after it.
     """
     if not isinstance(text, str):
         return text
-    if "</think>" in text.lower():
-        return text.split("</think>")[-1].strip()
-    return re.sub(r"(?is)^\s*<think>.*?</think>\s*", "", text, count=1)
+    if re.search(r"</(?:plan|think)>", text, flags=re.IGNORECASE):
+        return re.split(r"</(?:plan|think)>", text, flags=re.IGNORECASE)[-1].strip()
+    return re.sub(r"(?is)^\s*<(?:plan|think)>.*?</(?:plan|think)>\s*", "", text, count=1)

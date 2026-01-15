@@ -49,8 +49,8 @@ class FilterEnsemble:
         def strip_think_suffix(text):
             if not isinstance(text, str):
                 return text
-            if re.search(r"</think>", text, flags=re.IGNORECASE):
-                return re.split(r"</think>", text, flags=re.IGNORECASE)[-1].strip()
+            if re.search(r"</(?:think|plan)>", text, flags=re.IGNORECASE):
+                return re.split(r"</(?:think|plan)>", text, flags=re.IGNORECASE)[-1].strip()
             return text
 
         def strip_think_from_resps(resp_list):
