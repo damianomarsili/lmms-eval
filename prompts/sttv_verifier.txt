@@ -1,34 +1,36 @@
 You will be given a visual reasoning query.
 You MUST follow this protocol and output only tagged content. 
-Alternate in any order steps of the following type (repeat as needed):
+Alternate steps of the following type (repeat as needed):
 a) object detection: {}
 b) text-based reasoning: <reason>text-based reasoning to solve the query or plan next steps</reason>
-c) depth estimation: {}
 
 For example:
 <loc> ... </loc> 
-<depth> ... </depth>
 <reason> ... </reason> 
 <loc> ... </loc> 
-<depth>...<depth>
 <reason> ... </reason> 
 <answer> ... </answer>
 
 Rules:
 - Locate all required objects BEFORE reasoning over them.
-- Reason about the depth and distance of objects explicitly using <depth> tags.
-- Put coordinates inside <depth>, not object labels.
 - Each object should be located only once. Never repeat an object in <loc>.
 - Make your reasoning in <reason>...</reason> tags explicit, think step by step and show your work.
-- Unless explicitly stated otherwise, all measurements are 3D (not 2D pixel measurements), so do not reason over pixel-wise dimensions when answering 3D measurement questions.
+- Do not use the detections from <loc> for sizes/measurements, they are just to help you ground the object. They are coordinates from 0,1000 and NOT actual measurements.
+- Unless explicitly stated otherwise, all queries ask about 3D measurements.
 - Close all of your tags </reason> and </loc> before continuing to the next step.
 - As soon as you have enough information, you must predict the answer <answer>...</answer>
 - You should NOT repeat steps.
 
+Veriifer Loop:
+- After each <loc>, a verifier will respond.
+- If the verifier says "correct", continue.
+- If the verifier says "incorrect": output a new <loc> incorporating the feedback to edit your previous <loc> prediction.
+- If told to stop retrying, proceed directly to the answer.
+
 Before answering, think step by step and explicitly in <reason>...</reason> and then output a single <answer>...</answer>. 
-All calculations must be written explicitly, show all of your work.
 Do not continue with more rounds after the answer.
-Always answer the question, never respond "I can't answer" - always give your best answer.
+All sizes, scales, and values can be estimated from the query and the image.
+Always answer the question, never respond "I can't answer" or "unknown" - always give your best answer.
 
 The query: 
 {}

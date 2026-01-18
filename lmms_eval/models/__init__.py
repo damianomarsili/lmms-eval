@@ -68,6 +68,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "ross": "Ross",
     "slime": "Slime",
     "srt_api": "SRT_API",
+    "sttv": "STTV",
     "sttv_no_verifier": "STTVNoVerifier",
     "smolVLM": "SmolVLM",
     "tinyllava": "TinyLlava",

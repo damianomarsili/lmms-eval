@@ -140,6 +140,7 @@ class STTVNoVerifier(lmms):
         if not prompt_file.exists():
             raise FileNotFoundError(f"Prompt file not found: {prompt_file}")
         prompt_text = prompt_file.read_text(encoding="utf-8")
+        prompt_text = prompt_text.replace("<plan>", "<reason>").replace("</plan>", "</reason>")
 
         prompt_template = prompt_text.strip()
         if not prompt_template:
@@ -222,7 +223,9 @@ class STTVNoVerifier(lmms):
         cont = self.model.generate(**inputs, max_new_tokens=512)
 
         generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
-        answers = self.processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+        answers = self.processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=False, clean_up_tokenization_spaces=False
+        )
         return answers[0]
 
     def generate_until(self, requests: List[Instance]) -> List[str]:

@@ -1,0 +1,16 @@
+Images come in pairs: each original image is immediately followed by its overlay.
+
+Judge ONLY these target classes: {targets}
+
+Predicted {mode_word}s (in 0..1000 coords):
+{preds}
+
+A prediction is CORRECT iff:
+{rules}
+
+If ANY visible instance of a target class is NOT predicted => incorrect.
+
+Return ONLY:
+<answer>correct</answer>
+or
+<answer>incorrect</answer> and a one-sentence instruction explaining how to fix the predictions.

@@ -25,6 +25,16 @@ Rules:
 - As soon as you have enough information, you must predict the answer <answer>...</answer>
 - You should NOT repeat steps.
 
+Verifier protocol:
+- After each <loc> step, a verifier will evaluate your last <loc>.
+- You will receive one of these tags in the context:
+  <verifier>correct</verifier>
+  <verifier>...</verifier>
+- If the verifier says "correct", continue to the next step.
+- If the verifier says "incorrect", revise your most recent <loc> step using the feedback and output a corrected <loc> next. You must change at least one coordinate and never repeat the exact same <loc>.
+- If you see "verifier check failed too many times, move on with your prediction.", stop retrying and proceed to finish the answer.
+- Do NOT output <verifier> tags yourself.
+
 Before answering, think step by step and explicitly in <reason>...</reason> and then output a single <answer>...</answer>. 
 All calculations must be written explicitly, show all of your work.
 Do not continue with more rounds after the answer.
