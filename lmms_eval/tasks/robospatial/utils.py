@@ -40,6 +40,15 @@ def _normalize_yes_no(text: str) -> str:
     return parts[0] if parts else ""
 
 
+def _extract_last_answer_tag(text: str) -> Optional[str]:
+    if not isinstance(text, str):
+        return None
+    matches = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
+    if not matches:
+        return None
+    return matches[-1].strip()
+
+
 def _point_in_polygon(x: float, y: float, poly: List[Tuple[float, float]]) -> bool:
     # Ray-casting algorithm
     num = len(poly)
@@ -138,9 +147,9 @@ def _normalize_point_to_unit(point: Tuple[float, float], img: Any) -> Tuple[floa
 
 def robospatial_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = _strip_think_prefix(results[0] if results else "")
-    if "<answer>" in prediction:
-        match = re.search(r"<answer>(.*?)</answer>", prediction, re.DOTALL)
-        prediction = match.group(1).strip() if match else prediction
+    tagged_answer = _extract_last_answer_tag(prediction)
+    if tagged_answer is not None:
+        prediction = tagged_answer
 
     gt = doc["answer"]
 

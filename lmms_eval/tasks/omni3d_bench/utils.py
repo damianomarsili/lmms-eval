@@ -45,15 +45,24 @@ def _normalize_yes_no(text: str) -> str:
     return parts[0] if parts else ""
 
 
-def _extract_last_number(text: str) -> Optional[float]:
+def _extract_first_number(text: str) -> Optional[float]:
     text = _strip_think_prefix(text)
     matches = re.findall(r"-?\d+(?:\.\d+)?", text)
     if not matches:
         return None
     try:
-        return float(matches[-1])
+        return float(matches[0])
     except ValueError:
         return None
+
+
+def _extract_last_answer_tag(text: str) -> Optional[str]:
+    if not isinstance(text, str):
+        return None
+    matches = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
+    if not matches:
+        return None
+    return matches[-1].strip()
 
 
 def _mra_score(gt: float, pred: float) -> float:
@@ -67,9 +76,9 @@ def _mra_score(gt: float, pred: float) -> float:
 
 def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, Optional[float]]:
     prediction = _strip_think_prefix(results[0] if results else "")
-    if "<answer>" in prediction:
-        match = re.search(r"<answer>(.*?)</answer>", prediction, re.DOTALL)
-        prediction = match.group(1).strip() if match else prediction
+    tagged_answer = _extract_last_answer_tag(prediction)
+    if tagged_answer is not None:
+        prediction = tagged_answer
 
     ans_type = str(doc.get("answer_type", "")).lower()
     gt_raw = str(doc.get("answer", "")).strip()
@@ -86,7 +95,7 @@ def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str,
             gt_num = int(gt_raw)
         except Exception:
             pass
-        pred_num = _extract_last_number(prediction)
+        pred_num = _extract_first_number(prediction)
         if gt_num is not None and pred_num is not None:
             try:
                 pred_int = int(pred_num)
@@ -112,7 +121,7 @@ def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str,
             gt_num = float(gt_raw)
         except Exception:
             pass
-        pred_num = _extract_last_number(prediction)
+        pred_num = _extract_first_number(prediction)
         if gt_num is not None and pred_num is not None:
             num_other_score = _mra_score(gt_num, pred_num)
         else:

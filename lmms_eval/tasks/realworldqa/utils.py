@@ -42,9 +42,9 @@ def realworldqa_process_results(doc, results):
     else:
         raw_pred = results[0].lower().strip()
 
-    if "<answer>" in raw_pred:
-        match = re.search(r"<answer>(.*?)</answer>", raw_pred, re.DOTALL)
-        raw_pred = match.group(1).strip() if match else raw_pred
+    tagged_answer = _extract_last_answer_tag(raw_pred)
+    if tagged_answer is not None:
+        raw_pred = tagged_answer
 
     target_raw = str(doc["answer"]).strip()
     target = target_raw.lower()
@@ -84,6 +84,15 @@ def _strip_think_prefix(text: str) -> str:
     if re.search(r"</(?:plan|think)>", text, flags=re.IGNORECASE):
         return re.split(r"</(?:plan|think)>", text, flags=re.IGNORECASE)[-1].strip()
     return re.sub(r"(?is)^\s*<(?:plan|think)>.*?</(?:plan|think)>\s*", "", text, count=1)
+
+
+def _extract_last_answer_tag(text: str) -> str | None:
+    if not isinstance(text, str):
+        return None
+    matches = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
+    if not matches:
+        return None
+    return matches[-1].strip()
 
 
 def _normalize_yes_no(text: str) -> str:

@@ -1,4 +1,6 @@
-Images come in pairs: each original image is immediately followed by its overlay.
+Two images:
+1) original image
+2) same image with predicted {mode_word}s overlaid
 
 Judge ONLY these target classes: {targets}
 
@@ -8,9 +10,10 @@ Predicted {mode_word}s (in 0..1000 coords):
 A prediction is CORRECT iff:
 {rules}
 
-If ANY visible instance of a target class is NOT predicted => incorrect.
+Additionally, it is your job to check if there are other instances of the target classes that are NOT detected. 
+If there non-detected instances, the prediction is incorrect.
 
 Return ONLY:
-<answer>correct</answer>
+<answer>correct</answer> if all predictions are correct and all target objects are detected.
 or
-<answer>incorrect</answer> and a one-sentence instruction explaining how to fix the predictions.
+<answer>incorrect</answer> and a one-sentence instruction explicitly describing how the predictions should be adjusted to be correct.

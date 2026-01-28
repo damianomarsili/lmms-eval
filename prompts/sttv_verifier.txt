@@ -1,36 +1,29 @@
 You will be given a visual reasoning query.
-You MUST follow this protocol and output only tagged content. 
+You MUST follow this protocol and output only tagged content.
 Alternate steps of the following type (repeat as needed):
 a) object detection: {}
 b) text-based reasoning: <reason>text-based reasoning to solve the query or plan next steps</reason>
 
-For example:
-<loc> ... </loc> 
-<reason> ... </reason> 
-<loc> ... </loc> 
-<reason> ... </reason> 
-<answer> ... </answer>
+For example (each tag is kept blank, this is JUST an example of the round-based format):
+<loc></loc><reason></reason><loc></loc><reason></reason><answer></answer>
 
 Rules:
 - Locate all required objects BEFORE reasoning over them.
 - Each object should be located only once. Never repeat an object in <loc>.
 - Make your reasoning in <reason>...</reason> tags explicit, think step by step and show your work.
-- Do not use the detections from <loc> for sizes/measurements, they are just to help you ground the object. They are coordinates from 0,1000 and NOT actual measurements.
-- Unless explicitly stated otherwise, all queries ask about 3D measurements.
 - Close all of your tags </reason> and </loc> before continuing to the next step.
 - As soon as you have enough information, you must predict the answer <answer>...</answer>
 - You should NOT repeat steps.
+- If you are told a <loc> prediction is incorrect, you MUST re-attempt and update your prediction before proceeding.
+- Each response MUST end with <reason> and <answer> tags.
+- The query may have some bizarre measurements, assume these are hypotheticals used to scale values. They are not incorrect.
+- Visual size comparisons can happen visually via estimation or comparison if no explicit scale is given!
 
-Veriifer Loop:
-- After each <loc>, a verifier will respond.
-- If the verifier says "correct", continue.
-- If the verifier says "incorrect": output a new <loc> incorporating the feedback to edit your previous <loc> prediction.
-- If told to stop retrying, proceed directly to the answer.
+Before answering, think step by step and explicitly in <reason>...</reason> and then output a single <answer>...</answer>.
+All calculations must be written explicitly, show all of your work.
+Unless explicitly stated otherwise, all measurements are 3D (not 2D pixel measurements).
+Visual size comparisons can happen visually via estimation or comparison if no explicit scale is given!
+Always answer the question, never respond "I can't answer" or "cannot determine" or "unknown" - ALWAYS give your best answer.
 
-Before answering, think step by step and explicitly in <reason>...</reason> and then output a single <answer>...</answer>. 
-Do not continue with more rounds after the answer.
-All sizes, scales, and values can be estimated from the query and the image.
-Always answer the question, never respond "I can't answer" or "unknown" - always give your best answer.
-
-The query: 
+The query:
 {}

@@ -1,0 +1,23 @@
+You will be given a visual reasoning query and a candidate solution with steps and a final answer.
+Your only job is to check if the solution is reasonable. 
+
+You do not have to understand where each measurement/value is coming from, but simply check if the solution is reasonable for the given question.
+Comparative estimation (X is 1.5 times as tall as Y) is reasonable without explaining where the values comes from.
+
+Any response of "unknown" or "cannot determine" is ALWAYS invalid. The solution must present an answer for the query.
+
+If the solution is reasonable for the query, return:
+<answer>valid</answer>
+or
+If the solution is unreasonable for the query, return:
+<answer>invalid</answer>, and a brief specific explanation (1-2 sentences) of how to correct the solution.
+
+Query:
+{query}
+
+Candidate solution:
+{steps}
+
+Again, final answers of "cannot determine" are INCORRECT. In these cases, provide steps for how to estimate an answer.
+The query is ALWAYS reasonable and correct. Assume everything given in the query is correct.
+Do not be too strict, unless the model says "unknown" or "cannot determine".

@@ -70,6 +70,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "srt_api": "SRT_API",
     "sttv": "STTV",
     "sttv_no_verifier": "STTVNoVerifier",
+    "sttv_vllm": "STTVVLLM",
     "smolVLM": "SmolVLM",
     "tinyllava": "TinyLlava",
     "videoChatGPT": "VideoChatGPT",

@@ -1,21 +1,28 @@
+import base64
 import gc
+import json
+import os
 import re
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-import torch
 from accelerate import Accelerator, DistributedType
 from loguru import logger as eval_logger
 from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
-from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from lmms_eval import utils
 from lmms_eval.api.instance import Instance
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
-from lmms_eval.utils import stop_sequences_criteria
+
+try:
+    from vllm import LLM, SamplingParams
+except ImportError:
+    LLM = None
+    SamplingParams = None
 
 VERIFIER_BOX_RULES = """- The target object is the main content of the box.
 - The box covers most of the object.
@@ -40,16 +47,18 @@ class LocEntry:
     coords: Tuple[float, ...]
 
 
-@register_model("sttv")
-class STTV(lmms):
+@register_model("sttv_vllm")
+class STTVVLLM(lmms):
     """
     STTV Model with verifier.
     """
 
     def __init__(
         self,
-        pretrained: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
-        device_map: Optional[str] = "auto",
+        model: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        tensor_parallel_size: int = 1,
+        data_parallel_size: int = 1,
+        gpu_memory_utilization: float = 0.8,
         batch_size: Optional[Union[int, str]] = 1,
         depth: Union[bool, str, int, float] = False,
         prompt_path: Optional[str] = None,
@@ -59,30 +68,68 @@ class STTV(lmms):
         verifier_max_new_tokens: int = 96,
         verifier_image_side: int = 1024,
         trust_remote_code: Optional[bool] = True,
+        chat_template: Optional[str] = None,
+        min_image_pixels: int = 28,
+        seed: int = 1,
+        disable_log_stats: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
-        assert kwargs == {}, f"Unexpected kwargs: {kwargs}"
+        if LLM is None or SamplingParams is None:
+            raise ImportError("vllm is not installed. Please install vllm to use sttv_vllm.")
+
+        # Convert JSON-like string kwargs into dicts (vllm compatibility).
+        for key, value in kwargs.items():
+            if isinstance(value, str) and value.strip().startswith("{") and value.strip().endswith("}"):
+                try:
+                    kwargs[key] = json.loads(value)
+                except json.JSONDecodeError:
+                    eval_logger.warning(f"Failed to parse JSON-like string for argument '{key}': {value}")
+
+        self.model_name = model
+        self.pretrained = model
+        self.chat_template = self._load_chat_template(chat_template)
+        self.min_image_pixels = int(min_image_pixels)
+        self._enforce_image_resize = self._is_qwen_vl_model(model)
 
         accelerator = Accelerator()
-        self.accelerator = accelerator
         if accelerator.num_processes > 1:
-            self.device_map = f"cuda:{accelerator.local_process_index}"
+            assert accelerator.distributed_type in [
+                DistributedType.FSDP,
+                DistributedType.MULTI_GPU,
+                DistributedType.DEEPSPEED,
+            ], "Unsupported distributed type provided. Only DDP and FSDP are supported."
+            self.accelerator = accelerator
+            if self.accelerator.is_local_main_process:
+                eval_logger.info(f"Using {accelerator.num_processes} devices with data parallelism")
+            self._rank = self.accelerator.local_process_index
+            self._world_size = self.accelerator.num_processes
         else:
-            self.device_map = device_map
+            self.accelerator = accelerator
+            self._rank = self.accelerator.local_process_index
+            self._world_size = self.accelerator.num_processes
 
-        self._model = AutoModelForVision2Seq.from_pretrained(
-            pretrained,
-            device_map=self.device_map,
+        if data_parallel_size > 1:
+            assert tensor_parallel_size == 1, "Data parallelism is not supported with tensor parallelism for vllm."
+        if accelerator.num_processes > 1:
+            kwargs["distributed_executor_backend"] = "external_launcher"
+
+        os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+        self.client = LLM(
+            model=self.model_name,
+            tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
             trust_remote_code=trust_remote_code,
-        ).eval()
-        self.processor = AutoProcessor.from_pretrained(pretrained, trust_remote_code=trust_remote_code)
-        self._tokenizer = self.processor.tokenizer
-        if self._tokenizer is None:
-            raise ValueError("AutoProcessor did not provide a tokenizer.")
+            disable_log_stats=disable_log_stats,
+            seed=seed,
+            **kwargs,
+        )
+        self.disable_log_stats = disable_log_stats
+        self.seed = seed
 
-        self.pretrained = pretrained
-        self._config = self.model.config
+        self._config = None
+        self._tokenizer = None
+        self._device = self.accelerator.device
         self._max_length = 2048
         self.batch_size_per_gpu = int(batch_size)
         self.max_image_side = max_image_side
@@ -100,24 +147,6 @@ class STTV(lmms):
         self.self_verifier_template = self._load_self_verifier_template()
         self.self_verifier_max_new_tokens = int(self.verifier_max_new_tokens)
 
-        if accelerator.num_processes > 1:
-            assert accelerator.distributed_type in [
-                DistributedType.FSDP,
-                DistributedType.MULTI_GPU,
-            ], "Unsupported distributed type provided. Only DDP and FSDP are supported."
-            if accelerator.distributed_type == DistributedType.FSDP:
-                self._model = accelerator.prepare(self.model)
-            else:
-                self._model = accelerator.prepare_model(self.model, evaluation_mode=True)
-            if self.accelerator.is_local_main_process:
-                eval_logger.info(f"Using {accelerator.num_processes} devices with data parallelism")
-            self._rank = self.accelerator.local_process_index
-            self._world_size = self.accelerator.num_processes
-        else:
-            self._rank = 0
-            self._world_size = 1
-        self._device = self.model.device
-
     @property
     def config(self):
         return self._config
@@ -128,13 +157,11 @@ class STTV(lmms):
 
     @property
     def model(self):
-        if hasattr(self, "accelerator"):
-            return self.accelerator.unwrap_model(self._model)
-        return self._model
+        return self.client
 
     @property
     def eot_token_id(self):
-        return self.tokenizer.eos_token_id
+        return None
 
     @property
     def max_length(self):
@@ -237,10 +264,38 @@ class STTV(lmms):
         return self.prompt_template.format(self.instruction_text, context.strip())
 
     def _cleanup_after_sample(self) -> None:
-        if not torch.cuda.is_available():
-            return
         gc.collect()
-        torch.cuda.empty_cache()
+
+    def _load_chat_template(self, chat_template: Optional[str]) -> Optional[str]:
+        if chat_template is None:
+            return None
+        if os.path.sep in chat_template or chat_template.endswith((".jinja", ".jinja2", ".j2")):
+            if not os.path.isfile(chat_template):
+                raise FileNotFoundError(f"Chat template file not found: {chat_template}")
+            with open(chat_template, "r", encoding="utf-8") as handle:
+                return handle.read()
+        return chat_template
+
+    def _is_qwen_vl_model(self, model: str) -> bool:
+        qwen_vl_patterns = ["qwen2-vl", "qwen2.5-vl", "qwen3-vl"]
+        return any(pattern in model.lower() for pattern in qwen_vl_patterns)
+
+    def _maybe_resize_image(self, img: Image.Image) -> Image.Image:
+        if self.min_image_pixels <= 0:
+            return img
+        if min(img.size) <= 0:
+            raise ValueError(f"Invalid image dimensions: {img.size}")
+        if not self._enforce_image_resize or min(img.size) >= self.min_image_pixels:
+            return img
+        scale = self.min_image_pixels / min(img.size)
+        new_size = tuple(int(dim * scale) for dim in img.size)
+        return img.resize(new_size, Image.BICUBIC)
+
+    def _encode_image(self, image: Image.Image) -> str:
+        img = self._maybe_resize_image(image)
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     def _resize_longest_side(self, image: Image.Image, longest_side: int) -> Image.Image:
         width, height = image.size
@@ -261,7 +316,8 @@ class STTV(lmms):
             for item in visual_items:
                 if isinstance(item, Image.Image):
                     resized = self._resize_longest_side(item.convert("RGB"), self.max_image_side)
-                    content_parts.append({"type": "image", "image": resized})
+                    encoded = self._encode_image(resized)
+                    content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}})
                 else:
                     eval_logger.warning(f"Unsupported visual type: {type(item)}")
         content_parts.append({"type": "text", "text": context})
@@ -275,31 +331,19 @@ class STTV(lmms):
         max_new_tokens: int = 256,
     ) -> Tuple[str, int]:
         del gen_kwargs
-        inputs = self.processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        )
-        inputs = inputs.to(self.model.device)
-
-        generate_args: Dict[str, object] = {"max_new_tokens": max_new_tokens}
+        params: Dict[str, object] = {"max_tokens": max_new_tokens, "temperature": 0, "top_p": 1.0, "seed": self.seed}
         if stop_sequences:
-            stopping_criteria = stop_sequences_criteria(
-                self.tokenizer,
-                stop_sequences,
-                inputs.input_ids.shape[-1],
-                inputs.input_ids.shape[0],
-            )
-            generate_args["stopping_criteria"] = stopping_criteria
+            params["stop"] = stop_sequences
+        sampling_params = SamplingParams(**params)
 
-        cont = self.model.generate(**inputs, **generate_args)
+        if self.chat_template is not None:
+            response = self.client.chat(sampling_params=sampling_params, messages=messages, chat_template=self.chat_template)
+        else:
+            response = self.client.chat(sampling_params=sampling_params, messages=messages)
 
-        generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
-        token_count = sum(len(ids) for ids in generated_ids_trimmed)
-        answers = self.processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-        decoded = answers[0]
+        output = response[0].outputs[0]
+        decoded = output.text
+        token_count = len(getattr(output, "token_ids", []) or [])
         if stop_sequences:
             stop_index = None
             stop_token = None
@@ -310,6 +354,10 @@ class STTV(lmms):
                     stop_token = sequence
             if stop_index is not None and stop_token is not None:
                 decoded = decoded[: stop_index + len(stop_token)]
+            else:
+                stop_reason = getattr(output, "stop_reason", None)
+                if isinstance(stop_reason, str) and stop_reason in stop_sequences:
+                    decoded = f"{decoded}{stop_reason}"
         return decoded, token_count
 
     def _extract_last_loc_payload(self, text: str) -> str:
@@ -479,37 +527,38 @@ class STTV(lmms):
 
         content: List[Dict[str, object]] = []
         for original, overlay in zip(resized_originals, resized_overlays):
-            content.append({"type": "image", "image": original})
-            content.append({"type": "image", "image": overlay})
+            encoded_original = self._encode_image(original)
+            encoded_overlay = self._encode_image(overlay)
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded_original}"}})
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded_overlay}"}})
         content.append({"type": "text", "text": prompt})
 
         messages = [{"role": "user", "content": content}]
-
-        inputs = self.processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self.model.device)
-
-        outputs = self.model.generate(**inputs, max_new_tokens=self.verifier_max_new_tokens)
-        trimmed = outputs[:, inputs.input_ids.shape[1] :]
-        return self.processor.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        sampling_params = SamplingParams(
+            max_tokens=self.verifier_max_new_tokens,
+            temperature=0,
+            top_p=1.0,
+            seed=self.seed,
+        )
+        if self.chat_template is not None:
+            response = self.client.chat(sampling_params=sampling_params, messages=messages, chat_template=self.chat_template)
+        else:
+            response = self.client.chat(sampling_params=sampling_params, messages=messages)
+        return response[0].outputs[0].text
 
     def _run_self_verifier(self, visuals: List[Image.Image], prompt: str) -> str:
         messages = self._build_messages(prompt, visuals)
-        inputs = self.processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self.model.device)
-
-        outputs = self.model.generate(**inputs, max_new_tokens=self.self_verifier_max_new_tokens)
-        trimmed = outputs[:, inputs.input_ids.shape[1] :]
-        return self.processor.batch_decode(trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        sampling_params = SamplingParams(
+            max_tokens=self.self_verifier_max_new_tokens,
+            temperature=0,
+            top_p=1.0,
+            seed=self.seed,
+        )
+        if self.chat_template is not None:
+            response = self.client.chat(sampling_params=sampling_params, messages=messages, chat_template=self.chat_template)
+        else:
+            response = self.client.chat(sampling_params=sampling_params, messages=messages)
+        return response[0].outputs[0].text
 
     def _parse_verifier_answer(self, text: str) -> Tuple[str, str, str]:
         text = text.replace("<|im_end|>", "").strip()
