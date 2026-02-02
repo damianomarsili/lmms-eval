@@ -170,6 +170,10 @@ class MultiChoiceRegexFilter(ExtendedRegexFilter):
             # Process each response
             filtered = []
             for resp in r:
+                tagged_answer = _extract_last_answer_tag(resp)
+                if tagged_answer is not None:
+                    resp = tagged_answer.strip()
+
                 # If the question has no explicit choices, keep the response as-is (trimmed)
                 if not has_choices:
                     filtered.append(resp.strip())
