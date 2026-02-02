@@ -59,10 +59,21 @@ def _extract_first_number(text: str) -> Optional[float]:
 def _extract_last_answer_tag(text: str) -> Optional[str]:
     if not isinstance(text, str):
         return None
-    matches = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
-    if not matches:
+    open_matches = list(re.finditer(r"(?is)<answer>", text))
+    if not open_matches:
         return None
-    return matches[-1].strip()
+    match = open_matches[-1]
+    content_start = match.end()
+    close_match = re.search(r"(?is)</answer>", text[content_start:])
+    if close_match:
+        content_end = content_start + close_match.start()
+        return text[content_start:content_end].strip()
+    next_tag = re.search(r"(?is)<(reason|depth|loc|verifier|answer)>", text[content_start:])
+    if next_tag:
+        content_end = content_start + next_tag.start()
+        return text[content_start:content_end].strip()
+    return text[content_start:].strip()
+    return None
 
 
 def _mra_score(gt: float, pred: float) -> float:
