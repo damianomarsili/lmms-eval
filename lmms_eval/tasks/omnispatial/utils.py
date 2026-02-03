@@ -79,7 +79,11 @@ def omnispatial_process_results(doc, results):
 
     # extract predicted answer
     eval_type = config["metadata"]["eval_type"]
-    if eval_type == "json":
+    direct_letter = _extract_choice_letter(response)
+    if direct_letter and eval_type in {"direct", "re", "json"}:
+        pred_letter = direct_letter
+        flag = pred_letter == grounded_output
+    elif eval_type == "json":
         try:
             cleaned = response.strip().removeprefix("```json").removesuffix("```").strip()
             pred_letter = json.loads(cleaned).get("answer", "A").strip().upper()[:1]
@@ -199,6 +203,18 @@ def _extract_last_answer_tag(text: str) -> str | None:
         content_end = content_start + next_tag.start()
         return text[content_start:content_end].strip()
     return text[content_start:].strip()
+
+
+def _extract_choice_letter(text: str) -> str | None:
+    if not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    if len(cleaned) == 1 and cleaned.upper() in {"A", "B", "C", "D"}:
+        return cleaned.upper()
+    hits = re.findall(r"(?<![A-Za-z])([A-D])(?![A-Za-z])", cleaned, flags=re.IGNORECASE)
+    if hits:
+        return hits[-1].upper()
+    return None
 
 # from https://github.com/qizekun/OmniSpatial
 ###############################################################################
