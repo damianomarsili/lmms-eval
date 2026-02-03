@@ -51,12 +51,19 @@ def omnispatial_doc_to_visual(doc):
     return visual
 
 
-def omnispatial_doc_to_text(doc):
-    prompt = SYS_PROMPTS[config["metadata"]["prompt_type"]] + "\n" + FORMAT_PROMPTS[config["metadata"]["eval_type"]] + "\n\n" + doc["question"]
+def omnispatial_doc_to_text(doc, lmms_eval_specific_kwargs=None):
+    if lmms_eval_specific_kwargs is None:
+        lmms_eval_specific_kwargs = {}
+    pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
+    post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
+
+    prompt = doc["question"].strip()
     options = doc["options"]
     for i in range(len(options)):
         prompt += f"\n{chr(65 + i)}. {options[i]}"
-    return prompt
+
+    parts = [pre_prompt, prompt, post_prompt]
+    return "\n".join([p for p in parts if p])
 
 
 def omnispatial_process_results(doc, results):
