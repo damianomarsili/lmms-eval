@@ -71,6 +71,9 @@ def omnispatial_process_results(doc, results):
     # extract grounded answer
     grounded_output = doc["gt"]
     response = _strip_think_prefix(results[0])
+    tagged_answer = _extract_last_answer_tag(response)
+    if tagged_answer is not None:
+        response = tagged_answer
 
     query = omnispatial_doc_to_text(doc)
 
@@ -177,6 +180,25 @@ def _strip_think_prefix(text: str) -> str:
         return re.split(r"</(?:plan|think)>", text, flags=re.IGNORECASE)[-1].strip()
     return re.sub(r"(?is)^\s*<(?:plan|think)>.*?</(?:plan|think)>\s*", "", text, count=1)
 
+
+# Mirror answer-tag extraction used by other tasks.
+def _extract_last_answer_tag(text: str) -> str | None:
+    if not isinstance(text, str):
+        return None
+    open_matches = list(re.finditer(r"(?is)<answer>", text))
+    if not open_matches:
+        return None
+    match = open_matches[-1]
+    content_start = match.end()
+    close_match = re.search(r"(?is)</answer>", text[content_start:])
+    if close_match:
+        content_end = content_start + close_match.start()
+        return text[content_start:content_end].strip()
+    next_tag = re.search(r"(?is)<(reason|depth|loc|verifier|answer)>", text[content_start:])
+    if next_tag:
+        content_end = content_start + next_tag.start()
+        return text[content_start:content_end].strip()
+    return text[content_start:].strip()
 
 # from https://github.com/qizekun/OmniSpatial
 ###############################################################################
