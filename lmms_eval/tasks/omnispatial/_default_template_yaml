@@ -24,5 +24,5 @@ dataset_kwargs:
   force_download: true
 
 metadata:
-  prompt_type: manual_cot # ["none", "zeroshot_cot", "manual_cot"]
+  prompt_type: none # ["none", "zeroshot_cot", "manual_cot"]
   eval_type: re # ["direct", "re", "json", "llm"]
