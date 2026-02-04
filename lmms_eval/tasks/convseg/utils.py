@@ -106,7 +106,7 @@ def convseg_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional
         post_prompt = post_prompt_box
 
     prompt = str(doc.get("prompt", "")).strip()
-    prompt = prompt.replace("Segment the", "Locate the").replace("segment the", "Locate the")
+    prompt = re.sub(r"^(\s*)segment\b", r"\1Locate", prompt, flags=re.IGNORECASE)
 
     doc["_convseg_mode"] = mode
 
