@@ -3,11 +3,13 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from huggingface_hub import hf_hub_download
+from huggingface_hub import snapshot_download
 from PIL import Image
 
 
 DEFAULT_REPO_ID = "aadarsh99/ConvSeg"
+_CACHE_DIR: Optional[str] = None
+_CACHE_REPO: Optional[str] = None
 
 
 def _get_repo_id(lmms_eval_specific_kwargs: Optional[dict[str, Any]]) -> str:
@@ -16,23 +18,36 @@ def _get_repo_id(lmms_eval_specific_kwargs: Optional[dict[str, Any]]) -> str:
     return lmms_eval_specific_kwargs.get("repo_id") or os.getenv("CONVSEG_REPO") or DEFAULT_REPO_ID
 
 
+def _ensure_cache_dir(repo_id: str) -> str:
+    global _CACHE_DIR, _CACHE_REPO
+    if _CACHE_DIR is not None and _CACHE_REPO == repo_id:
+        return _CACHE_DIR
+
+    cache_override = os.getenv("CONVSEG_CACHE_DIR", "").strip()
+    if cache_override:
+        if not os.path.isdir(cache_override):
+            raise FileNotFoundError(f"CONVSEG_CACHE_DIR does not exist: {cache_override}")
+        _CACHE_DIR = cache_override
+        _CACHE_REPO = repo_id
+        return _CACHE_DIR
+
+    _CACHE_DIR = snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir_use_symlinks=False)
+    _CACHE_REPO = repo_id
+    return _CACHE_DIR
+
+
 def _open_from_hf_path(rel_path: str, repo_id: str) -> Image.Image:
+    cache_dir = _ensure_cache_dir(repo_id)
     candidates = [rel_path]
     if not rel_path.startswith("data/"):
         candidates.append(os.path.join("data", rel_path))
 
-    last_err: Exception | None = None
     for cand in candidates:
-        try:
-            local_path = hf_hub_download(repo_id, cand, repo_type="dataset")
+        local_path = os.path.join(cache_dir, cand)
+        if os.path.isfile(local_path):
             return Image.open(local_path)
-        except Exception as exc:  # pragma: no cover - best effort fallback
-            last_err = exc
-            continue
 
     msg = f"Could not resolve image path '{rel_path}' from {repo_id}"
-    if last_err:
-        msg += f": {last_err}"
     raise FileNotFoundError(msg)
 
 
@@ -67,6 +82,7 @@ def _to_pil_image(obj: Any, force_rgb: bool = False, repo_id: Optional[str] = No
 
 def convseg_doc_to_visual(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[dict[str, Any]] = None) -> List[Any]:
     repo_id = _get_repo_id(lmms_eval_specific_kwargs)
+    _ensure_cache_dir(repo_id)
     doc["_convseg_repo"] = repo_id
     image = _to_pil_image(doc["image"], force_rgb=True, repo_id=repo_id)
     return [image]
