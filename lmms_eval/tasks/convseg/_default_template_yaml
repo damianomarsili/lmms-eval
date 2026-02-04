@@ -1,0 +1,28 @@
+dataset_path: aadarsh99/ConvSeg
+output_type: generate_until
+doc_to_visual: !function utils.convseg_doc_to_visual
+doc_to_text: !function utils.convseg_doc_to_text
+doc_to_target: !function utils.convseg_doc_to_target
+process_results: !function utils.convseg_process_results
+
+metric_list:
+  - metric: convseg_point_acc
+    aggregation: mean
+    higher_is_better: true
+
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: ""
+    post_prompt: "\nReply with a single <loc> tag like <loc>object:500,500</loc> where values are in [0,1000] and in the format x,y for the one object that matches the query. Use exactly one point. The object label must appear before the coordinates."
+    post_prompt_box: "\nReply with a single <loc> tag like <loc>object:100,100,400,400</loc> where values are in [0,1000] and in the format x_min,y_min,x_max,y_max for the one object that matches the query. Use exactly one box. The object label must appear before the coordinates."
+    mode: "point"
+
+generation_kwargs:
+  max_new_tokens: 512
+  temperature: 0
+  top_p: 1.0
+  num_beams: 1
+  do_sample: false
+
+metadata:
+  version: "0.0"

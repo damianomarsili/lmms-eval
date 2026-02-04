@@ -1,0 +1,3 @@
+task: convseg_human_annotated
+test_split: human_annotated
+include: _default_template_yaml
