@@ -3,10 +3,40 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from huggingface_hub import hf_hub_download
 from PIL import Image
 
 
-def _to_pil_image(obj: Any, force_rgb: bool = False) -> Image.Image:
+DEFAULT_REPO_ID = "aadarsh99/ConvSeg"
+
+
+def _get_repo_id(lmms_eval_specific_kwargs: Optional[dict[str, Any]]) -> str:
+    if lmms_eval_specific_kwargs is None:
+        lmms_eval_specific_kwargs = {}
+    return lmms_eval_specific_kwargs.get("repo_id") or os.getenv("CONVSEG_REPO") or DEFAULT_REPO_ID
+
+
+def _open_from_hf_path(rel_path: str, repo_id: str) -> Image.Image:
+    candidates = [rel_path]
+    if not rel_path.startswith("data/"):
+        candidates.append(os.path.join("data", rel_path))
+
+    last_err: Exception | None = None
+    for cand in candidates:
+        try:
+            local_path = hf_hub_download(repo_id, cand, repo_type="dataset")
+            return Image.open(local_path)
+        except Exception as exc:  # pragma: no cover - best effort fallback
+            last_err = exc
+            continue
+
+    msg = f"Could not resolve image path '{rel_path}' from {repo_id}"
+    if last_err:
+        msg += f": {last_err}"
+    raise FileNotFoundError(msg)
+
+
+def _to_pil_image(obj: Any, force_rgb: bool = False, repo_id: Optional[str] = None) -> Image.Image:
     if isinstance(obj, Image.Image):
         return obj.convert("RGB") if force_rgb else obj
     if isinstance(obj, dict):
@@ -18,15 +48,27 @@ def _to_pil_image(obj: Any, force_rgb: bool = False) -> Image.Image:
             if os.path.isfile(path):
                 img = Image.open(path)
                 return img.convert("RGB") if force_rgb else img
+            if repo_id:
+                img = _open_from_hf_path(path, repo_id)
+                return img.convert("RGB") if force_rgb else img
             raise FileNotFoundError(f"Image path does not exist: {path}")
     if isinstance(obj, (bytes, bytearray)):
         img = Image.open(io.BytesIO(obj))
         return img.convert("RGB") if force_rgb else img
+    if isinstance(obj, str):
+        if os.path.isfile(obj):
+            img = Image.open(obj)
+            return img.convert("RGB") if force_rgb else img
+        if repo_id:
+            img = _open_from_hf_path(obj, repo_id)
+            return img.convert("RGB") if force_rgb else img
     raise TypeError(f"Unsupported image type: {type(obj)}")
 
 
 def convseg_doc_to_visual(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[dict[str, Any]] = None) -> List[Any]:
-    image = _to_pil_image(doc["image"], force_rgb=True)
+    repo_id = _get_repo_id(lmms_eval_specific_kwargs)
+    doc["_convseg_repo"] = repo_id
+    image = _to_pil_image(doc["image"], force_rgb=True, repo_id=repo_id)
     return [image]
 
 
@@ -34,6 +76,8 @@ def convseg_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional
     if lmms_eval_specific_kwargs is None:
         lmms_eval_specific_kwargs = {}
 
+    repo_id = _get_repo_id(lmms_eval_specific_kwargs)
+    doc["_convseg_repo"] = repo_id
     pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
     post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
     post_prompt_box = lmms_eval_specific_kwargs.get("post_prompt_box", "")
@@ -129,6 +173,7 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
     if not points:
         return {"convseg_point_acc": 0.0}
 
-    mask = _to_pil_image(doc["mask"], force_rgb=False)
+    repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
+    mask = _to_pil_image(doc["mask"], force_rgb=False, repo_id=repo_id)
     point = points[0]
     return {"convseg_point_acc": 1.0 if _mask_contains_point(mask, point) else 0.0}

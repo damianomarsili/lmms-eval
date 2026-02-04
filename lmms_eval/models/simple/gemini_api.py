@@ -233,6 +233,7 @@ class GeminiAPI(lmms):
         continual_mode: bool = True,
         response_persistent_folder: str = "./logs/gemini_persistent_folder",
         interleave: bool = False,
+        max_image_side: int = 768,
         api_key: Optional[str] = None,
         vertexai: bool = False,
         vertex_project: Optional[str] = None,
@@ -249,6 +250,7 @@ class GeminiAPI(lmms):
         self.continual_mode = continual_mode
         self.response_persistent_file = ""
         self.interleave = interleave
+        self.max_image_side = int(max_image_side)
 
         self.client = _create_genai_client(
             api_key=api_key,
@@ -314,6 +316,18 @@ class GeminiAPI(lmms):
                 new_list.append(j)
         return new_list
 
+    def _resize_longest_side(self, image: Image.Image, longest_side: int) -> Image.Image:
+        width, height = image.size
+        if max(width, height) <= longest_side:
+            return image
+        if width >= height:
+            new_width = longest_side
+            new_height = int(round(height * (longest_side / width)))
+        else:
+            new_height = longest_side
+            new_width = int(round(width * (longest_side / height)))
+        return image.resize((new_width, new_height), Image.BICUBIC)
+
     def encode_video(self, video_path):
         uploaded_obj = self.client.files.upload(file=video_path)
         # Allow some time for the backend to process large uploads when needed.
@@ -378,6 +392,8 @@ class GeminiAPI(lmms):
 
         parts = []
         for item in sequence:
+            if isinstance(item, Image.Image):
+                item = self._resize_longest_side(item.convert("RGB"), self.max_image_side)
             part = _coerce_to_part(item)
             if part is not None:
                 parts.append(part)
