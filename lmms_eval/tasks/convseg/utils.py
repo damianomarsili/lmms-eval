@@ -158,15 +158,15 @@ def _parse_loc_points(payload: str, mode: str) -> List[Tuple[float, float]]:
 
 def _parse_loc_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
     boxes: List[Tuple[float, float, float, float]] = []
-    for entry in payload.split(";"):
-        entry = entry.strip()
-        if not entry:
-            continue
+    entries = [e.strip() for e in payload.split(";") if e.strip()]
+    if not entries:
+        entries = [payload.strip()]
+    for entry in entries:
         if ":" in entry:
             _, entry = entry.split(":", 1)
         nums = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", entry)]
-        if len(nums) >= 4:
-            boxes.append((nums[0], nums[1], nums[2], nums[3]))
+        for i in range(0, len(nums) - 3, 4):
+            boxes.append((nums[i], nums[i + 1], nums[i + 2], nums[i + 3]))
     return boxes
 
 
