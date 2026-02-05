@@ -41,6 +41,10 @@ def _open_from_hf_path(rel_path: str, repo_id: str) -> Image.Image:
     candidates = [rel_path]
     if not rel_path.startswith("data/"):
         candidates.append(os.path.join("data", rel_path))
+    if not rel_path.startswith("images/"):
+        candidates.append(os.path.join("images", rel_path))
+    if not rel_path.startswith("data/images/"):
+        candidates.append(os.path.join("data", "images", rel_path))
 
     for cand in candidates:
         local_path = os.path.join(cache_dir, cand)
@@ -226,6 +230,14 @@ def _get_image_size(doc: Dict[str, Any], repo_id: str) -> Optional[Tuple[int, in
     for source in (doc, sample):
         if not isinstance(source, dict):
             continue
+        meta = source.get("image_meta")
+        if isinstance(meta, dict):
+            for w_key, h_key in (("width", "height"), ("w", "h")):
+                if w_key in meta and h_key in meta:
+                    try:
+                        return int(meta[w_key]), int(meta[h_key])
+                    except Exception:
+                        pass
         size = source.get("image_size") or source.get("size")
         if isinstance(size, (list, tuple)) and len(size) == 2:
             try:
@@ -245,6 +257,26 @@ def _get_image_size(doc: Dict[str, Any], repo_id: str) -> Optional[Tuple[int, in
                     return int(source[w_key]), int(source[h_key])
                 except Exception:
                     pass
+
+    # If a mask is present, use its size (same spatial dims as image).
+    for source in (sample, doc):
+        if not isinstance(source, dict):
+            continue
+        if "mask" in source:
+            mask = source.get("mask")
+            if isinstance(mask, dict):
+                size = mask.get("size")
+                if isinstance(size, (list, tuple)) and len(size) == 2:
+                    try:
+                        # COCO RLE mask sizes are [H, W]
+                        return int(size[1]), int(size[0])
+                    except Exception:
+                        pass
+            try:
+                mask_img = _to_pil_image(mask, force_rgb=False, repo_id=repo_id)
+                return mask_img.size
+            except Exception:
+                pass
 
     image = _get_image_from_doc(doc, repo_id)
     if image is not None:
