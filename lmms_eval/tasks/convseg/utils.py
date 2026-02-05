@@ -265,7 +265,27 @@ def _mask_to_bboxes(mask_img: Image.Image) -> List[Tuple[float, float, float, fl
                         q.append((ny, nx))
             # Use exclusive max coords for area computation
             bboxes.append((float(minx), float(miny), float(maxx + 1), float(maxy + 1)))
-    return bboxes
+
+    # Filter tiny components (noise)
+    min_area_px = float(os.getenv("CONVSEG_MIN_GT_BOX_AREA", "64"))
+    min_side_px = float(os.getenv("CONVSEG_MIN_GT_BOX_SIDE", "4"))
+    filtered: List[Tuple[float, float, float, float]] = []
+    for box in bboxes:
+        w = max(0.0, box[2] - box[0])
+        h = max(0.0, box[3] - box[1])
+        area = w * h
+        if area < min_area_px or min(w, h) < min_side_px:
+            continue
+        filtered.append(box)
+
+    if filtered:
+        return filtered
+
+    # If everything got filtered, fall back to largest box
+    if bboxes:
+        bboxes.sort(key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
+        return [bboxes[0]]
+    return []
 
 
 def _compute_iou(box1: Tuple[float, float, float, float], box2: Tuple[float, float, float, float]) -> float:
