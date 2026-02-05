@@ -20,7 +20,7 @@ lmms_eval_specific_kwargs:
   default:
     pre_prompt: ""
     post_prompt: "\nReply with a single <loc> tag like <loc>object:500,500</loc> where values are in [0,1000] and in the format x,y for the one object that matches the query. Use exactly one point. The object label must appear before the coordinates."
-    post_prompt_box: "\nReply with a single <loc> tag like <loc>object:100,100,400,400</loc> where values are in [0,1000] and in the format x_min,y_min,x_max,y_max for the one object that matches the query. Use exactly one box. The object label must appear before the coordinates."
+    post_prompt_box: "\nReply with a single <loc> tag like <loc>object1:100,100,400,400,object2:200,200,500,500</loc> where values are in [0,1000] and in the format x_min,y_min,x_max,y_max for EACH object that matches the query. The object label must appear before the coordinates."
     mode: "point"
 
 generation_kwargs:
