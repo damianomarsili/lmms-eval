@@ -2,3 +2,12 @@ group: convseg
 task:
   - convseg_human_annotated
   - convseg_sam_seeded
+aggregate_metric_list:
+  - metric: convseg_point_acc
+    aggregation: mean
+    weight_by_size: true
+  - metric: convseg_box_miou
+    aggregation: mean
+    weight_by_size: true
+  - metric: convseg_box_miou_overall
+    aggregation: !function utils.convseg_box_miou_from_stats

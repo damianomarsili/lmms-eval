@@ -372,11 +372,51 @@ def convseg_box_miou(results: List[Any]) -> float:
     return sum(all_ious) / len(all_ious)
 
 
+def convseg_box_iou_stats(results: List[Any]) -> Dict[str, float]:
+    total = 0.0
+    count = 0
+    for result in results:
+        if isinstance(result, dict):
+            ious = result.get("ious")
+            if isinstance(ious, list):
+                for v in ious:
+                    if isinstance(v, (int, float)):
+                        total += float(v)
+                        count += 1
+        elif isinstance(result, (int, float)):
+            total += float(result)
+            count += 1
+    return {"sum": total, "count": float(count)}
+
+
+def convseg_box_miou_from_stats(metrics: List[Any], sizes: List[int] | None = None, weight_by_size: bool = False) -> float:
+    del sizes, weight_by_size
+    total = 0.0
+    count = 0.0
+    for item in metrics:
+        if isinstance(item, dict):
+            s = item.get("sum")
+            c = item.get("count")
+            if isinstance(s, (int, float)) and isinstance(c, (int, float)):
+                total += float(s)
+                count += float(c)
+        elif isinstance(item, (int, float)):
+            total += float(item)
+            count += 1.0
+    if count <= 0:
+        return 0.0
+    return total / count
+
+
 def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = _strip_think_prefix(results[0] if results else "")
     payload = _extract_loc_payload(prediction)
     if not payload:
-        return {"convseg_point_acc": 0.0, "convseg_box_miou": {"ious": []}}
+        return {
+            "convseg_point_acc": 0.0,
+            "convseg_box_miou": {"ious": []},
+            "convseg_box_miou_overall": {"ious": []},
+        }
 
     mode = os.getenv("CONVSEG_MODE", "").strip().lower()
     if not mode:
@@ -395,11 +435,19 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
             if norm_box is not None:
                 pred_boxes.append(norm_box)
         ious = _match_boxes(gt_boxes, pred_boxes)
-        return {"convseg_point_acc": 0.0, "convseg_box_miou": {"ious": ious}}
+        return {
+            "convseg_point_acc": 0.0,
+            "convseg_box_miou": {"ious": ious},
+            "convseg_box_miou_overall": {"ious": ious},
+        }
 
     points = _parse_loc_points(payload, mode)
     if not points:
-        return {"convseg_point_acc": 0.0, "convseg_box_miou": {"ious": []}}
+        return {
+            "convseg_point_acc": 0.0,
+            "convseg_box_miou": {"ious": []},
+            "convseg_box_miou_overall": {"ious": []},
+        }
 
     repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
     mask = _to_pil_image(doc["mask"], force_rgb=False, repo_id=repo_id)
@@ -407,4 +455,5 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
     return {
         "convseg_point_acc": 1.0 if _mask_contains_point(mask, point) else 0.0,
         "convseg_box_miou": {"ious": []},
+        "convseg_box_miou_overall": {"ious": []},
     }
