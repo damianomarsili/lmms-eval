@@ -279,13 +279,34 @@ def _mask_to_bboxes(mask_img: Image.Image) -> List[Tuple[float, float, float, fl
         filtered.append(box)
 
     if filtered:
+        filtered = _merge_contained_boxes(filtered)
         return filtered
 
     # If everything got filtered, fall back to largest box
     if bboxes:
+        bboxes = _merge_contained_boxes(bboxes)
         bboxes.sort(key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
         return [bboxes[0]]
     return []
+
+
+def _merge_contained_boxes(
+    boxes: List[Tuple[float, float, float, float]],
+) -> List[Tuple[float, float, float, float]]:
+    if len(boxes) <= 1:
+        return boxes
+    # Sort by area descending so larger boxes come first
+    boxes_sorted = sorted(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
+    kept: List[Tuple[float, float, float, float]] = []
+    for box in boxes_sorted:
+        contained = False
+        for big in kept:
+            if box[0] >= big[0] and box[1] >= big[1] and box[2] <= big[2] and box[3] <= big[3]:
+                contained = True
+                break
+        if not contained:
+            kept.append(box)
+    return kept
 
 
 def _compute_iou(box1: Tuple[float, float, float, float], box2: Tuple[float, float, float, float]) -> float:
