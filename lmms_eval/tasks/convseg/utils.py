@@ -415,7 +415,7 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
         return {
             "convseg_point_acc": 0.0,
             "convseg_box_miou": {"ious": []},
-            "convseg_box_miou_overall": {"ious": []},
+            "convseg_box_iou_global": {"ious": []},
         }
 
     mode = os.getenv("CONVSEG_MODE", "").strip().lower()
@@ -438,7 +438,7 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
         return {
             "convseg_point_acc": 0.0,
             "convseg_box_miou": {"ious": ious},
-            "convseg_box_miou_overall": {"ious": ious},
+            "convseg_box_iou_global": {"ious": ious},
         }
 
     points = _parse_loc_points(payload, mode)
@@ -446,7 +446,7 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
         return {
             "convseg_point_acc": 0.0,
             "convseg_box_miou": {"ious": []},
-            "convseg_box_miou_overall": {"ious": []},
+            "convseg_box_iou_global": {"ious": []},
         }
 
     repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
@@ -455,5 +455,5 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
     return {
         "convseg_point_acc": 1.0 if _mask_contains_point(mask, point) else 0.0,
         "convseg_box_miou": {"ious": []},
-        "convseg_box_miou_overall": {"ious": []},
+        "convseg_box_iou_global": {"ious": []},
     }

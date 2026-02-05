@@ -12,7 +12,7 @@ metric_list:
   - metric: convseg_box_miou
     aggregation: !function utils.convseg_box_miou
     higher_is_better: true
-  - metric: convseg_box_miou_overall
+  - metric: convseg_box_iou_global
     aggregation: !function utils.convseg_box_iou_stats
     higher_is_better: true
 
