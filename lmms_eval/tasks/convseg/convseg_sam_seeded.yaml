@@ -1,0 +1,3 @@
+task: convseg_sam_seeded
+test_split: sam_seeded
+include: _default_template_yaml
