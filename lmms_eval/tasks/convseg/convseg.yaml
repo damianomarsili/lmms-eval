@@ -1,3 +1,4 @@
+group: convseg
 task:
   - convseg_human_annotated
   - convseg_sam_seeded
