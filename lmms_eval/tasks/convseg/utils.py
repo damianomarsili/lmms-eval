@@ -1,8 +1,10 @@
 import io
 import os
 import re
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 from huggingface_hub import snapshot_download
 from PIL import Image
 
@@ -154,6 +156,20 @@ def _parse_loc_points(payload: str, mode: str) -> List[Tuple[float, float]]:
     return points
 
 
+def _parse_loc_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
+    boxes: List[Tuple[float, float, float, float]] = []
+    for entry in payload.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" in entry:
+            _, entry = entry.split(":", 1)
+        nums = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", entry)]
+        if len(nums) >= 4:
+            boxes.append((nums[0], nums[1], nums[2], nums[3]))
+    return boxes
+
+
 def _normalize_to_pixel(point: Tuple[float, float], width: int, height: int) -> Optional[Tuple[int, int]]:
     x, y = point
     if width <= 0 or height <= 0:
@@ -168,6 +184,32 @@ def _normalize_to_pixel(point: Tuple[float, float], width: int, height: int) -> 
     return x_px, y_px
 
 
+def _normalize_box_to_pixels(
+    box: Tuple[float, float, float, float], width: int, height: int
+) -> Optional[Tuple[float, float, float, float]]:
+    if width <= 0 or height <= 0:
+        return None
+    x1, y1, x2, y2 = box
+    # normalize from [0,1000] into pixel coords
+    x1 = (x1 / 1000.0) * width
+    x2 = (x2 / 1000.0) * width
+    y1 = (y1 / 1000.0) * height
+    y2 = (y2 / 1000.0) * height
+    # ensure order
+    if x2 < x1:
+        x1, x2 = x2, x1
+    if y2 < y1:
+        y1, y2 = y2, y1
+    # clip to image bounds
+    x1 = max(0.0, min(float(width), x1))
+    x2 = max(0.0, min(float(width), x2))
+    y1 = max(0.0, min(float(height), y1))
+    y2 = max(0.0, min(float(height), y2))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return (x1, y1, x2, y2)
+
+
 def _mask_contains_point(mask_img: Image.Image, point: Tuple[float, float]) -> bool:
     if mask_img.mode != "L":
         mask_img = mask_img.convert("L")
@@ -178,18 +220,133 @@ def _mask_contains_point(mask_img: Image.Image, point: Tuple[float, float]) -> b
     return mask_img.getpixel(pixel) > 0
 
 
+def _mask_to_bboxes(mask_img: Image.Image) -> List[Tuple[float, float, float, float]]:
+    mask = np.array(mask_img.convert("L")) > 0
+    if mask.ndim != 2:
+        mask = mask[:, :, 0]
+    height, width = mask.shape
+    visited = np.zeros_like(mask, dtype=bool)
+    bboxes: List[Tuple[float, float, float, float]] = []
+
+    for y in range(height):
+        for x in range(width):
+            if not mask[y, x] or visited[y, x]:
+                continue
+            minx = maxx = x
+            miny = maxy = y
+            q = deque([(y, x)])
+            visited[y, x] = True
+            while q:
+                cy, cx = q.popleft()
+                if cx < minx:
+                    minx = cx
+                if cx > maxx:
+                    maxx = cx
+                if cy < miny:
+                    miny = cy
+                if cy > maxy:
+                    maxy = cy
+                for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+                    if 0 <= ny < height and 0 <= nx < width and mask[ny, nx] and not visited[ny, nx]:
+                        visited[ny, nx] = True
+                        q.append((ny, nx))
+            # Use exclusive max coords for area computation
+            bboxes.append((float(minx), float(miny), float(maxx + 1), float(maxy + 1)))
+    return bboxes
+
+
+def _compute_iou(box1: Tuple[float, float, float, float], box2: Tuple[float, float, float, float]) -> float:
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+    inter_w = max(0.0, x2 - x1)
+    inter_h = max(0.0, y2 - y1)
+    inter = inter_w * inter_h
+    area1 = max(0.0, box1[2] - box1[0]) * max(0.0, box1[3] - box1[1])
+    area2 = max(0.0, box2[2] - box2[0]) * max(0.0, box2[3] - box2[1])
+    union = area1 + area2 - inter
+    if union <= 0.0:
+        return 0.0
+    return inter / union
+
+
+def _match_boxes(
+    gt_boxes: List[Tuple[float, float, float, float]],
+    pred_boxes: List[Tuple[float, float, float, float]],
+) -> List[float]:
+    if not gt_boxes:
+        return []
+    if not pred_boxes:
+        return [0.0 for _ in gt_boxes]
+
+    gt_centers = [((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0) for b in gt_boxes]
+    pred_centers = [((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0) for b in pred_boxes]
+
+    pairs: List[Tuple[float, int, int]] = []
+    for gi, (gx, gy) in enumerate(gt_centers):
+        for pi, (px, py) in enumerate(pred_centers):
+            dist = (gx - px) ** 2 + (gy - py) ** 2
+            pairs.append((dist, gi, pi))
+    pairs.sort(key=lambda x: x[0])
+
+    assigned_gt = set()
+    assigned_pred = set()
+    ious = [0.0 for _ in gt_boxes]
+    for _, gi, pi in pairs:
+        if gi in assigned_gt or pi in assigned_pred:
+            continue
+        assigned_gt.add(gi)
+        assigned_pred.add(pi)
+        ious[gi] = _compute_iou(gt_boxes[gi], pred_boxes[pi])
+        if len(assigned_gt) == len(gt_boxes) or len(assigned_pred) == len(pred_boxes):
+            break
+    return ious
+
+
+def convseg_box_miou(results: List[Any]) -> float:
+    all_ious: List[float] = []
+    for result in results:
+        if isinstance(result, dict):
+            ious = result.get("ious")
+            if isinstance(ious, list):
+                all_ious.extend([float(v) for v in ious])
+        elif isinstance(result, (int, float)):
+            all_ious.append(float(result))
+    if not all_ious:
+        return 0.0
+    return sum(all_ious) / len(all_ious)
+
+
 def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = _strip_think_prefix(results[0] if results else "")
     payload = _extract_loc_payload(prediction)
     if not payload:
-        return {"convseg_point_acc": 0.0}
+        return {"convseg_point_acc": 0.0, "convseg_box_miou": {"ious": []}}
 
     mode = str(doc.get("_convseg_mode", "point")).lower().strip()
+    if mode == "box":
+        repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
+        mask = _to_pil_image(doc["mask"], force_rgb=False, repo_id=repo_id)
+        gt_boxes = _mask_to_bboxes(mask)
+        pred_boxes_raw = _parse_loc_boxes(payload)
+        pred_boxes: List[Tuple[float, float, float, float]] = []
+        width, height = mask.size
+        for box in pred_boxes_raw:
+            norm_box = _normalize_box_to_pixels(box, width, height)
+            if norm_box is not None:
+                pred_boxes.append(norm_box)
+        ious = _match_boxes(gt_boxes, pred_boxes)
+        return {"convseg_point_acc": 0.0, "convseg_box_miou": {"ious": ious}}
+
     points = _parse_loc_points(payload, mode)
     if not points:
-        return {"convseg_point_acc": 0.0}
+        return {"convseg_point_acc": 0.0, "convseg_box_miou": {"ious": []}}
 
     repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
     mask = _to_pil_image(doc["mask"], force_rgb=False, repo_id=repo_id)
     point = points[0]
-    return {"convseg_point_acc": 1.0 if _mask_contains_point(mask, point) else 0.0}
+    return {
+        "convseg_point_acc": 1.0 if _mask_contains_point(mask, point) else 0.0,
+        "convseg_box_miou": {"ious": []},
+    }
