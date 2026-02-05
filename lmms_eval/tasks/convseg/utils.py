@@ -170,6 +170,19 @@ def _parse_loc_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
     return boxes
 
 
+def _infer_mode_from_payload(payload: str) -> str:
+    for entry in payload.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" in entry:
+            _, entry = entry.split(":", 1)
+        nums = re.findall(r"-?\d+(?:\.\d+)?", entry)
+        if len(nums) >= 4:
+            return "box"
+    return "point"
+
+
 def _normalize_to_pixel(point: Tuple[float, float], width: int, height: int) -> Optional[Tuple[int, int]]:
     x, y = point
     if width <= 0 or height <= 0:
@@ -324,7 +337,11 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
     if not payload:
         return {"convseg_point_acc": 0.0, "convseg_box_miou": {"ious": []}}
 
-    mode = str(doc.get("_convseg_mode", "point")).lower().strip()
+    mode = os.getenv("CONVSEG_MODE", "").strip().lower()
+    if not mode:
+        mode = os.getenv("MODE", "").strip().lower()
+    if not mode:
+        mode = _infer_mode_from_payload(payload)
     if mode == "box":
         repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
         mask = _to_pil_image(doc["mask"], force_rgb=False, repo_id=repo_id)
