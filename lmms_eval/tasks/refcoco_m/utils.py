@@ -55,11 +55,15 @@ def _to_pil_image(obj: Any, force_rgb: bool = False, repo_id: Optional[str] = No
     if isinstance(obj, Image.Image):
         return obj.convert("RGB") if force_rgb else obj
     if isinstance(obj, dict):
+        if obj.get("image") is not None:
+            return _to_pil_image(obj["image"], force_rgb=force_rgb, repo_id=repo_id)
         if obj.get("bytes") is not None:
             img = Image.open(io.BytesIO(obj["bytes"]))
             return img.convert("RGB") if force_rgb else img
-        if obj.get("path"):
-            path = obj["path"]
+        for key in ("path", "file_name", "filename", "file_path", "filepath"):
+            path = obj.get(key)
+            if not path:
+                continue
             if os.path.isfile(path):
                 img = Image.open(path)
                 return img.convert("RGB") if force_rgb else img
@@ -156,12 +160,106 @@ def _get_first_sample(doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _resolve_image_from_image_id(doc: Dict[str, Any]) -> Optional[Any]:
+    sample = _get_first_sample(doc)
+    image_id = None
+    for source in (sample, doc):
+        if isinstance(source, dict):
+            image_id = source.get("image_id") or source.get("img_id")
+            if image_id is not None:
+                break
+    if image_id is None:
+        return None
+
+    images = doc.get("images")
+    if isinstance(images, dict):
+        if image_id in images:
+            return images[image_id]
+        if str(image_id) in images:
+            return images[str(image_id)]
+    if isinstance(images, list):
+        for item in images:
+            if not isinstance(item, dict):
+                continue
+            if item.get("id") == image_id or item.get("image_id") == image_id or item.get("img_id") == image_id:
+                for key in ("image", "img", "path", "file_name", "filename", "file_path", "filepath", "coco_url"):
+                    if key in item:
+                        return item.get(key)
+    return None
+
+
+def _get_image_from_doc(doc: Dict[str, Any], repo_id: str) -> Optional[Image.Image]:
+    candidates: List[Any] = []
+    for key in ("image", "img", "image_path", "image_file", "file_name", "filepath", "path", "img_path"):
+        if key in doc:
+            candidates.append(doc.get(key))
+    image_from_id = _resolve_image_from_image_id(doc)
+    if image_from_id is not None:
+        candidates.append(image_from_id)
+    sample = _get_first_sample(doc)
+    if isinstance(sample, dict):
+        for key in ("image", "img", "image_path", "image_file", "file_name", "filepath", "path", "img_path"):
+            if key in sample:
+                candidates.append(sample.get(key))
+        image_from_id = _resolve_image_from_image_id(sample)
+        if image_from_id is not None:
+            candidates.append(image_from_id)
+    for cand in candidates:
+        try:
+            if cand is None:
+                continue
+            return _to_pil_image(cand, force_rgb=True, repo_id=repo_id)
+        except Exception:
+            continue
+    return None
+
+
+def _get_image_size(doc: Dict[str, Any], repo_id: str) -> Optional[Tuple[int, int]]:
+    cached = doc.get("_refcoco_m_image_size")
+    if isinstance(cached, (list, tuple)) and len(cached) == 2:
+        try:
+            return int(cached[0]), int(cached[1])
+        except Exception:
+            pass
+
+    sample = _get_first_sample(doc)
+    for source in (doc, sample):
+        if not isinstance(source, dict):
+            continue
+        size = source.get("image_size") or source.get("size")
+        if isinstance(size, (list, tuple)) and len(size) == 2:
+            try:
+                return int(size[0]), int(size[1])
+            except Exception:
+                pass
+        if isinstance(size, dict):
+            for w_key, h_key in (("width", "height"), ("w", "h")):
+                if w_key in size and h_key in size:
+                    try:
+                        return int(size[w_key]), int(size[h_key])
+                    except Exception:
+                        pass
+        for w_key, h_key in (("image_width", "image_height"), ("width", "height"), ("img_width", "img_height")):
+            if w_key in source and h_key in source:
+                try:
+                    return int(source[w_key]), int(source[h_key])
+                except Exception:
+                    pass
+
+    image = _get_image_from_doc(doc, repo_id)
+    if image is not None:
+        return image.size
+    return None
+
+
 def refcoco_m_doc_to_visual(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[dict[str, Any]] = None) -> List[Any]:
     repo_id = _get_repo_id(lmms_eval_specific_kwargs)
     _ensure_cache_dir(repo_id)
     doc["_refcoco_m_repo"] = repo_id
-    image = _to_pil_image(doc["image"], force_rgb=True, repo_id=repo_id)
-    return [image]
+    image = _get_image_from_doc(doc, repo_id)
+    if image is None:
+        raise KeyError("RefCOCO-m doc does not contain an image field or image path.")
+    return [image.convert("RGB")]
 
 
 def refcoco_m_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[dict[str, Any]] = None) -> str:
@@ -170,6 +268,9 @@ def refcoco_m_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Option
 
     repo_id = _get_repo_id(lmms_eval_specific_kwargs)
     doc["_refcoco_m_repo"] = repo_id
+    size = _get_image_size(doc, repo_id)
+    if size is not None:
+        doc["_refcoco_m_image_size"] = size
     pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
     post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
     post_prompt_box = lmms_eval_specific_kwargs.get("post_prompt_box", "")
@@ -225,8 +326,16 @@ def refcoco_m_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[s
         return {"refcoco_m_box_miou": 0.0}
 
     repo_id = str(doc.get("_refcoco_m_repo") or DEFAULT_REPO_ID)
-    image = _to_pil_image(doc["image"], force_rgb=False, repo_id=repo_id)
-    width, height = image.size
+    size = _get_image_size(doc, repo_id)
+    if size is None:
+        sample = _get_first_sample(doc)
+        doc_keys = sorted(doc.keys()) if isinstance(doc, dict) else []
+        sample_keys = sorted(sample.keys()) if isinstance(sample, dict) else []
+        raise KeyError(
+            "Unable to resolve image size for refcoco-m doc. "
+            f"doc keys={doc_keys} sample keys={sample_keys}"
+        )
+    width, height = size
 
     x, y, w, h = [float(v) for v in bbox[:4]]
     max_val = max(x, y, w, h)
