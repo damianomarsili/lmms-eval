@@ -1,0 +1,3 @@
+task: refcoco_m
+test_split: validation
+include: _default_template_yaml
