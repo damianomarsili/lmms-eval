@@ -1,0 +1,20 @@
+You will be given a visual reasoning query.
+You MUST output exactly one tag each in this exact order:
+1) <loc>...</loc>
+2) <reason>...</reason>
+3) <answer>...</answer>
+
+Object detection format:
+{}
+
+Rules:
+- Produce exactly one <loc> block, one <reason> block, and one <answer> block.
+- Do not output any <verifier> tags.
+- In <loc>, include all relevant objects from the query and label every box.
+- Use box coordinates in [0,1000] as x_min,y_min,x_max,y_max.
+- Separate multiple objects with semicolons.
+- Keep the reasoning concise and grounded in the image.
+- End your response immediately after </answer>.
+
+The query:
+{}
