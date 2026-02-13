@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 MRA_THRESHOLDS = [0.5, 0.45, 0.40, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.05]
 YES_SET = {"yes", "y", "yeah", "yep", "true", "1"}
 NO_SET = {"no", "n", "nope", "false", "0"}
+NUMBER_PATTERN = re.compile(r"-?\d+(?:\.\d+)?(?:e[-+]?\d+)?", re.IGNORECASE)
 
 
 def omni3d_doc_to_visual(doc: Dict[str, Any]) -> List[Any]:
@@ -45,15 +46,24 @@ def _normalize_yes_no(text: str) -> str:
     return parts[0] if parts else ""
 
 
-def _extract_first_number(text: str) -> Optional[float]:
+def _extract_float(text: str) -> Optional[float]:
     text = _strip_think_prefix(text)
-    matches = re.findall(r"-?\d+(?:\.\d+)?", text)
-    if not matches:
+    cleaned = text.strip()
+    try:
+        return float(cleaned)
+    except ValueError:
+        pass
+    match = NUMBER_PATTERN.search(cleaned)
+    if match is None:
         return None
     try:
-        return float(matches[0])
+        return float(match.group(0))
     except ValueError:
         return None
+
+
+def _normalize_text(text: str) -> str:
+    return " ".join(text.strip().lower().split())
 
 
 def _extract_last_answer_tag(text: str) -> Optional[str]:
@@ -73,7 +83,6 @@ def _extract_last_answer_tag(text: str) -> Optional[str]:
         content_end = content_start + next_tag.start()
         return text[content_start:content_end].strip()
     return text[content_start:].strip()
-    return None
 
 
 def _mra_score(gt: float, pred: float) -> float:
@@ -101,12 +110,9 @@ def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str,
     overall_score = 0.0
 
     if ans_type == "int":
-        gt_num = None
-        try:
-            gt_num = int(gt_raw)
-        except Exception:
-            pass
-        pred_num = _extract_first_number(prediction)
+        gt_num_float = _extract_float(gt_raw)
+        pred_num = _extract_float(prediction)
+        gt_num = None if gt_num_float is None else int(gt_num_float)
         if gt_num is not None and pred_num is not None:
             try:
                 pred_int = int(pred_num)
@@ -117,8 +123,8 @@ def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str,
             num_ct_score = 0.0
         overall_score = num_ct_score
     elif ans_type == "str":
-        gt_lower = gt_raw.lower()
-        pred_lower = prediction.strip().lower()
+        gt_lower = _normalize_text(gt_raw)
+        pred_lower = _normalize_text(prediction)
         if gt_lower in {"yes", "no"}:
             normalized_pred = _normalize_yes_no(prediction)
             yes_no_score = 1.0 if normalized_pred == gt_lower else 0.0
@@ -127,12 +133,8 @@ def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str,
             multi_score = 1.0 if pred_lower == gt_lower else 0.0
             overall_score = multi_score
     elif ans_type == "float":
-        gt_num = None
-        try:
-            gt_num = float(gt_raw)
-        except Exception:
-            pass
-        pred_num = _extract_first_number(prediction)
+        gt_num = _extract_float(gt_raw)
+        pred_num = _extract_float(prediction)
         if gt_num is not None and pred_num is not None:
             num_other_score = _mra_score(gt_num, pred_num)
         else:
