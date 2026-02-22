@@ -27,7 +27,7 @@ class STTVNoVerifier(lmms):
         batch_size: Optional[Union[int, str]] = 1,
         depth: Union[bool, str, int, float] = False,
         prompt_path: Optional[str] = None,
-        instruction_mode: str = "point",
+        instruction_mode: str = "box",
         max_image_side: int = 768,
         trust_remote_code: Optional[bool] = True,
         **kwargs,
@@ -59,10 +59,13 @@ class STTVNoVerifier(lmms):
         self.batch_size_per_gpu = int(batch_size)
         self.max_image_side = max_image_side
         self.depth_enabled = self._coerce_bool(depth)
+        normalized_mode = instruction_mode.lower()
+        if normalized_mode != "box":
+            raise ValueError(f"Only box mode is supported; got instruction_mode={instruction_mode}")
 
         self.prompt_template = self._load_prompt_template(prompt_path, self.depth_enabled)
-        self.instruction_text = self._load_instruction_text(instruction_mode)
-        self.depth_instruction_text = self._load_depth_instruction_text(instruction_mode) if self.depth_enabled else None
+        self.instruction_text = self._load_instruction_text(normalized_mode)
+        self.depth_instruction_text = self._load_depth_instruction_text(normalized_mode) if self.depth_enabled else None
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [
@@ -149,9 +152,9 @@ class STTVNoVerifier(lmms):
 
     def _load_instruction_text(self, instruction_mode: str) -> str:
         mode = instruction_mode.lower()
-        if mode not in {"point", "box"}:
-            raise ValueError(f"instruction_mode must be 'point' or 'box', got {instruction_mode}")
-        filename = "instructions_pt.txt" if mode == "point" else "instructions_box.txt"
+        if mode != "box":
+            raise ValueError(f"Only box mode is supported; got instruction_mode={instruction_mode}")
+        filename = "instructions_box.txt"
         instruction_file = Path(__file__).resolve().parents[3] / "prompts" / filename
         if not instruction_file.exists():
             raise FileNotFoundError(f"Instruction file not found: {instruction_file}")
@@ -162,9 +165,9 @@ class STTVNoVerifier(lmms):
 
     def _load_depth_instruction_text(self, instruction_mode: str) -> str:
         mode = instruction_mode.lower()
-        if mode not in {"point", "box"}:
-            raise ValueError(f"instruction_mode must be 'point' or 'box', got {instruction_mode}")
-        filename = "instructions_depth_pt.txt" if mode == "point" else "instructions_depth_box.txt"
+        if mode != "box":
+            raise ValueError(f"Only box mode is supported; got instruction_mode={instruction_mode}")
+        filename = "instructions_depth_box.txt"
         instruction_file = Path(__file__).resolve().parents[3] / "prompts" / filename
         if not instruction_file.exists():
             raise FileNotFoundError(f"Depth instruction file not found: {instruction_file}")

@@ -1,1 +1,11 @@
-Reply with one or more <loc> tags like <loc>object1_label:100,100,400,400; object2_label:150,150,500,500</loc> where values are in [0,1000] and in the format x_min, y_min, x_max, y_max for every object that matches the query. Separate objects by a semi-colon. Do not put loc> in your predictions until the end, where you close with </loc>. Object labels go BEFORE coordinates. You must ALWAYS label the objects you detect.
+Reply with exactly one <bbox_2d> block. Inside <bbox_2d>, write one object per line in this exact format:
+label="object_name", [x_min, y_min, x_max, y_max]
+
+Rules:
+- Coordinates must be in [0,1000].
+- Use x_min, y_min, x_max, y_max.
+- Include every relevant object.
+- Do not split objects across multiple <bbox_2d> blocks.
+- Each detected object label must appear in the query text.
+- Do not use semicolons or object: prefixes.
+- Do not output anything outside <bbox_2d> ... </bbox_2d> for this step.

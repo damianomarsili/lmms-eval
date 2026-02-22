@@ -17,7 +17,7 @@ class STTVNoVerifierVLLM(STTVVLLM):
     STTV no-verifier vLLM model:
     - one pass
     - no verifier calls
-    - prompt enforces exactly one <loc>, one <reason>, one <answer>
+    - prompt enforces exactly one <bbox_2d>, one <reason>, one <answer>
     """
 
     def __init__(
@@ -41,6 +41,8 @@ class STTVNoVerifierVLLM(STTVVLLM):
     ) -> None:
         if self._coerce_bool(depth):
             raise ValueError("sttv_no_verifier_vllm does not support depth prompts.")
+        if instruction_mode.lower() != "box":
+            raise ValueError(f"Only box mode is supported; got instruction_mode={instruction_mode}")
 
         if prompt_path is None:
             prompt_path = str(Path(__file__).resolve().parents[3] / "prompts" / "sttv_no_verifier_single_turn.txt")

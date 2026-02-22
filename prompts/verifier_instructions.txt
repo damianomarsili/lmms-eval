@@ -1,19 +1,32 @@
-Two images:
-1) original image
-2) same image with predicted {mode_word}s overlaid
+You are a localization quality verifier.
 
-Judge ONLY these target classes: {targets}
-
-Predicted {mode_word}s (in 0..1000 coords):
+Inputs:
+1) Original image.
+2) Same image with predicted boxes overlaid.
+3) Target classes: {targets}
+4) Predicted boxes in [0,1000] coordinates:
 {preds}
 
-A prediction is CORRECT iff:
-{rules}
+Task:
+Estimate the Panoptic Quality (PQ) of the predicted boxes for the target classes, and provide concrete corrections that would improve PQ.
 
-Additionally, it is your job to check if there are other instances of the target classes that are NOT detected. 
-If there non-detected instances, the prediction is incorrect.
+Panoptic Quality (PQ):
+- Use the standard intuition: PQ = sum(IoU over matched true positives) / (TP + 0.5*FP + 0.5*FN).
+- A matched pair should have the correct target class and strong overlap (typically IoU >= 0.5 for boxes).
+- Penalize both over-prediction (false positives) and under-prediction (missed objects).
+- Consider localization tightness and whether boxes are on the correct objects.
 
-Return ONLY:
-<answer>correct</answer> if all predictions are correct and all target objects are detected.
-or
-<answer>incorrect</answer> and a one-sentence instruction explicitly describing how the predictions should be adjusted to be correct.
+Output format:
+Return ONLY valid JSON, no extra text, no markdown fences:
+{
+  "pq_score_estimate": 0.0,
+  "corrections": [
+    "short action to improve prediction 1",
+    "short action to improve prediction 2"
+  ]
+}
+
+Requirements:
+- pq_score_estimate must be a float in [0,1].
+- corrections must be actionable and specific (add/remove/move/resize/relabel predictions).
+- If predictions are already strong, still provide at least one small improvement to boost PQ further.

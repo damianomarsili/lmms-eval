@@ -17,20 +17,15 @@ from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 from lmms_eval.utils import stop_sequences_criteria
 
-VERIFIER_BOX_RULES = """- The target object is the main content of the box.
-- The box covers most of the object.
-- The box is not wildly oversized"""
-
-VERIFIER_POINT_RULES = """- The point is fully enclosed on the target object."""
-
-POINT_COLOR = (0, 0, 255)
 BOX_COLOR = (0, 0, 255)
 BOX_FILL_RGBA = (0, 0, 255, 25)
-POINT_ALPHA = 150
 FONT_SCALE = 0.022
-POINT_RADIUS_SCALE = 0.012
 BOX_OUTLINE_SCALE = 0.005
 LABEL_PADDING = 2
+BBOX_2D_ENTRY_PATTERN = re.compile(
+    r'^\s*label\s*=\s*"(?P<label>[^"\n]+?)"\s*,\s*\[(?P<coords>[^\]]+)\]\s*$',
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -53,7 +48,7 @@ class STTV(lmms):
         batch_size: Optional[Union[int, str]] = 1,
         depth: Union[bool, str, int, float] = False,
         prompt_path: Optional[str] = None,
-        instruction_mode: str = "point",
+        instruction_mode: str = "box",
         max_image_side: int = 768,
         verifier_max_attempts: int = 3,
         verifier_max_new_tokens: int = 96,
@@ -88,6 +83,8 @@ class STTV(lmms):
         self.max_image_side = max_image_side
         self.depth_enabled = self._coerce_bool(depth)
         self.instruction_mode = instruction_mode.lower()
+        if self.instruction_mode != "box":
+            raise ValueError(f"Only box mode is supported; got instruction_mode={instruction_mode}")
 
         self.verifier_max_attempts = int(verifier_max_attempts)
         self.verifier_max_new_tokens = int(verifier_max_new_tokens)
@@ -187,9 +184,9 @@ class STTV(lmms):
 
     def _load_instruction_text(self, instruction_mode: str) -> str:
         mode = instruction_mode.lower()
-        if mode not in {"point", "box"}:
-            raise ValueError(f"instruction_mode must be 'point' or 'box', got {instruction_mode}")
-        filename = "instructions_pt.txt" if mode == "point" else "instructions_box.txt"
+        if mode != "box":
+            raise ValueError(f"Only box mode is supported; got instruction_mode={instruction_mode}")
+        filename = "instructions_box.txt"
         instruction_file = Path(__file__).resolve().parents[3] / "prompts" / filename
         if not instruction_file.exists():
             raise FileNotFoundError(f"Instruction file not found: {instruction_file}")
@@ -200,9 +197,9 @@ class STTV(lmms):
 
     def _load_depth_instruction_text(self, instruction_mode: str) -> str:
         mode = instruction_mode.lower()
-        if mode not in {"point", "box"}:
-            raise ValueError(f"instruction_mode must be 'point' or 'box', got {instruction_mode}")
-        filename = "instructions_depth_pt.txt" if mode == "point" else "instructions_depth_box.txt"
+        if mode != "box":
+            raise ValueError(f"Only box mode is supported; got instruction_mode={instruction_mode}")
+        filename = "instructions_depth_box.txt"
         instruction_file = Path(__file__).resolve().parents[3] / "prompts" / filename
         if not instruction_file.exists():
             raise FileNotFoundError(f"Depth instruction file not found: {instruction_file}")
@@ -312,63 +309,45 @@ class STTV(lmms):
                 decoded = decoded[: stop_index + len(stop_token)]
         return decoded, token_count
 
-    def _extract_last_loc_payload(self, text: str) -> str:
-        matches = re.findall(r"(?is)<loc>(.*?)</loc>", text)
+    def _extract_last_bbox_2d_payload(self, text: str) -> str:
+        matches = re.findall(r"(?is)<bbox_2d>(.*?)</bbox_2d>", text)
         if not matches:
             return ""
         return matches[-1].strip()
 
-    def _split_image_prefix(self, chunk: str) -> Tuple[int, str]:
-        match = re.match(r"\s*image_(\d+)\s*,\s*(.*)", chunk, flags=re.IGNORECASE)
-        if match:
-            return int(match.group(1)), match.group(2).strip()
-        return 1, chunk.strip()
-
-    def _parse_loc_entries(self, payload: str, mode: str) -> List[LocEntry]:
+    def _parse_bbox_2d_entries(self, payload: str) -> List[LocEntry]:
         entries: List[LocEntry] = []
-        chunks = [chunk.strip() for chunk in re.split(r"\s*;\s*", payload) if chunk.strip()]
-        last_label = ""
-        last_label_by_image: Dict[int, str] = {}
-        for chunk in chunks:
-            image_idx, remainder = self._split_image_prefix(chunk)
-            if not remainder:
+        nonempty_line_count = 0
+        for raw_line in payload.splitlines():
+            line = raw_line.strip()
+            if not line:
                 continue
-            if ":" in remainder:
-                label, coords = remainder.split(":", 1)
-                label = label.strip()
-                last_label = label
-                last_label_by_image[image_idx] = label
-            else:
-                label = last_label_by_image.get(image_idx, last_label)
-                coords = remainder
-                if not label:
-                    continue
-            numbers = re.findall(r"-?\d+(?:\.\d+)?", coords)
-            if mode == "point" and len(numbers) >= 2:
-                coords_tuple = (float(numbers[0]), float(numbers[1]))
-            elif mode == "box" and len(numbers) >= 4:
-                coords_tuple = tuple(float(n) for n in numbers[:4])
-            else:
-                continue
-            entries.append(LocEntry(image_index=image_idx, label=label, coords=coords_tuple))
+            nonempty_line_count += 1
+            match = BBOX_2D_ENTRY_PATTERN.fullmatch(line)
+            if match is None:
+                return []
+
+            label = match.group("label").strip()
+            if not label:
+                return []
+
+            numbers = re.findall(r"-?\d+(?:\.\d+)?", match.group("coords"))
+            if len(numbers) != 4:
+                return []
+            coords_tuple = tuple(float(n) for n in numbers[:4])
+            entries.append(LocEntry(image_index=1, label=label, coords=coords_tuple))
+        if nonempty_line_count == 0:
+            return []
         return entries
 
     def _has_missing_label(self, payload: str) -> bool:
-        chunks = [chunk.strip() for chunk in re.split(r"\s*;\s*", payload) if chunk.strip()]
-        last_label = ""
-        last_label_by_image: Dict[int, str] = {}
-        for chunk in chunks:
-            image_idx, remainder = self._split_image_prefix(chunk)
-            if not remainder:
+        for raw_line in payload.splitlines():
+            line = raw_line.strip()
+            if not line:
                 continue
-            if ":" in remainder:
-                label, _ = remainder.split(":", 1)
-                label = label.strip()
-                last_label = label
-                last_label_by_image[image_idx] = label
-                continue
-            label = last_label_by_image.get(image_idx, last_label)
-            if not label:
+            has_coords = bool(re.search(r"\[[^\]]*\]", line))
+            has_label = bool(re.search(r'(?i)\blabel\s*=\s*"', line))
+            if has_coords and not has_label:
                 return True
         return False
 
@@ -403,31 +382,6 @@ class STTV(lmms):
             return right - left, bottom - top
         return font.getsize(text)
 
-    def _overlay_points(self, image: Image.Image, entries: List[LocEntry]) -> Image.Image:
-        base = image.copy().convert("RGBA")
-        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        font = self._load_font(base)
-
-        width, height = base.size
-        radius = max(6, int(min(width, height) * POINT_RADIUS_SCALE))
-        idx = 1
-        for entry in entries:
-            x, y = self._scale_point(entry.coords[0], entry.coords[1], width, height)
-            draw.ellipse(
-                (x - radius, y - radius, x + radius, y + radius),
-                fill=POINT_COLOR + (POINT_ALPHA,),
-                outline=(255, 255, 255, 255),
-                width=2,
-            )
-            tag = f"{entry.label}#{idx}"
-            text_w, text_h = self._measure_text(draw, tag, font)
-            text_x = max(0, x - radius - LABEL_PADDING - text_w)
-            text_y = max(0, y - radius - LABEL_PADDING - text_h)
-            draw.text((text_x, text_y), tag, fill=(255, 255, 255, 255), font=font)
-            idx += 1
-        return Image.alpha_composite(base, overlay).convert("RGB")
-
     def _overlay_boxes(self, image: Image.Image, entries: List[LocEntry]) -> Image.Image:
         base = image.copy().convert("RGBA")
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
@@ -448,30 +402,18 @@ class STTV(lmms):
             idx += 1
         return Image.alpha_composite(base, overlay).convert("RGB")
 
-    def _build_verifier_prompt(self, entries: List[LocEntry], image_count: int, mode: str) -> str:
+    def _build_verifier_prompt(self, entries: List[LocEntry], image_count: int) -> str:
         targets = sorted({entry.label for entry in entries})
         targets_str = ", ".join(targets) if targets else "(none)"
 
         lines: List[str] = []
         for i, entry in enumerate(entries, 1):
-            prefix = f"image_{entry.image_index}," if image_count > 1 else ""
-            if mode == "box":
-                x1, y1, x2, y2 = entry.coords[:4]
-                lines.append(f"{i}) {prefix}{entry.label}:{int(x1)},{int(y1)},{int(x2)},{int(y2)}")
-            else:
-                x, y = entry.coords[:2]
-                lines.append(f"{i}) {prefix}{entry.label}:{int(x)},{int(y)}")
+            prefix = f"image_{entry.image_index}, " if image_count > 1 else ""
+            x1, y1, x2, y2 = entry.coords[:4]
+            lines.append(f'{i}) {prefix}label="{entry.label}", [{int(x1)}, {int(y1)}, {int(x2)}, {int(y2)}]')
 
         preds_str = "\n".join(lines) if lines else "(none)"
-        mode_word = "box" if mode == "box" else "point"
-        rules = VERIFIER_BOX_RULES if mode == "box" else VERIFIER_POINT_RULES
-
-        return self.verifier_template.format(
-            mode_word=mode_word,
-            targets=targets_str,
-            preds=preds_str,
-            rules=rules,
-        )
+        return self.verifier_template.format(targets=targets_str, preds=preds_str)
 
     def _run_verifier(self, originals: List[Image.Image], overlays: List[Image.Image], prompt: str) -> str:
         resized_originals = [self._resize_longest_side(image, self.verifier_image_side) for image in originals]
@@ -573,7 +515,7 @@ class STTV(lmms):
 
     def _iter_tag_payloads(self, text: str) -> List[Tuple[str, str]]:
         entries: List[Tuple[str, str]] = []
-        tag_open = re.compile(r"(?is)<(reason|depth|loc|answer)>")
+        tag_open = re.compile(r"(?is)<(reason|depth|bbox_2d|answer)>")
         i = 0
         while True:
             open_match = tag_open.search(text, i)
@@ -586,7 +528,7 @@ class STTV(lmms):
                 content_end = content_start + close_match.start()
                 end_index = content_start + close_match.end()
             else:
-                next_tag = re.search(r"(?is)<(reason|depth|loc|answer|verifier)>", text[content_start:])
+                next_tag = re.search(r"(?is)<(reason|depth|bbox_2d|answer|verifier)>", text[content_start:])
                 if next_tag:
                     content_end = content_start + next_tag.start()
                     end_index = content_start + next_tag.start()
@@ -635,9 +577,18 @@ class STTV(lmms):
         max_final_answer_tokens = 64
         final_answer_prompt = "I can now predict the final answer which is: "
         final_fail_prompt = "I am unable to locate the objects correctly. Provide a final <reason> step and " "then the final <answer>."
-        empty_loc_prompt = "You did not place an object in your <loc> tags, please review the format and try again."
-        missing_label_prompt = "You did not label the object you are detecting, please add the object name before the coordinates."
-        generic_format_prompt = "There was a formatting error with your <loc> predictions, please review the format and try again."
+        bbox_line_format = (
+            'label="object_name", [x_min, y_min, x_max, y_max]'
+            if self.instruction_mode == "box"
+            else 'label="object_name", [x, y]'
+        )
+        empty_loc_prompt = "You did not place an object in your <bbox_2d> tags, please review the format and try again."
+        missing_label_prompt = (
+            f"Missing required label syntax. Use one line per object as: {bbox_line_format}."
+        )
+        generic_format_prompt = (
+            f"Formatting error in <bbox_2d>. Use ONLY lines in this exact format: {bbox_line_format}."
+        )
         total_generated_tokens = 0
         max_total_tokens = max_steps * max_new_tokens_per_chunk
         max_self_verify_attempts = self.verifier_max_attempts
@@ -675,7 +626,7 @@ class STTV(lmms):
             collapsed = self._collapse_for_self_verifier(current_output)
             if not collapsed.strip():
                 collapsed = re.sub(r"(?is)<verifier>.*?</verifier>", "", current_output)
-                collapsed = re.sub(r"(?is)<(loc|depth)>.*?</\1>", "", collapsed)
+                collapsed = re.sub(r"(?is)<(bbox_2d|depth)>.*?</\1>", "", collapsed)
                 collapsed = collapsed.strip()
             prompt = self._build_self_verifier_prompt(query, collapsed)
             self_verifier_output = self._run_self_verifier(visuals, prompt)
@@ -719,7 +670,7 @@ class STTV(lmms):
             chunk, new_tokens = self._generate_once(
                 messages,
                 gen_kwargs,
-                stop_sequences=["</loc>", "</answer>"],
+                stop_sequences=["</bbox_2d>", "</answer>"],
                 max_new_tokens=max_new_tokens_per_chunk,
             )
             if new_tokens == 0 and not chunk.strip():
@@ -751,9 +702,9 @@ class STTV(lmms):
             if step_count >= max_steps:
                 return _inject_final_answer(final_answer_prompt)
 
-            loc_payload = self._extract_last_loc_payload(chunk)
+            loc_payload = self._extract_last_bbox_2d_payload(chunk)
             if not loc_payload:
-                if "<loc>" in chunk:
+                if "<bbox_2d>" in chunk:
                     failures += 1
                     output_chunks.append(f"<verifier>{empty_loc_prompt}</verifier>")
                     if failures >= max_failed_loc_rounds:
@@ -813,14 +764,14 @@ class STTV(lmms):
                         "content": [
                             {
                                 "type": "text",
-                                "text": (f"{verifier_message}\nYou repeated the same <loc> coordinates. " "You must change them. Output only a corrected <loc> step."),
+                                "text": (f"{verifier_message}\nYou repeated the same <bbox_2d> coordinates. " "You must change them. Output only a corrected <bbox_2d> step."),
                             }
                         ],
                     }
                 )
                 continue
 
-            entries = self._parse_loc_entries(loc_payload, self.instruction_mode)
+            entries = self._parse_bbox_2d_entries(loc_payload)
             if not entries:
                 failures += 1
                 output_chunks.append(f"<verifier>{generic_format_prompt}</verifier>")
@@ -836,7 +787,7 @@ class STTV(lmms):
                     }
                 )
                 continue
-            if self.instruction_mode == "box" and self._has_invalid_box(entries):
+            if self._has_invalid_box(entries):
                 failures += 1
                 output_chunks.append(f"<verifier>{generic_format_prompt}</verifier>")
                 if failures >= max_failed_loc_rounds:
@@ -861,14 +812,11 @@ class STTV(lmms):
             for image_idx in range(1, len(visuals) + 1):
                 original = visuals[image_idx - 1].convert("RGB")
                 image_entries = entries_by_image.get(image_idx, [])
-                if self.instruction_mode == "box":
-                    overlay = self._overlay_boxes(original, image_entries)
-                else:
-                    overlay = self._overlay_points(original, image_entries)
+                overlay = self._overlay_boxes(original, image_entries)
                 original_images.append(original)
                 overlay_images.append(overlay)
 
-            verifier_prompt = self._build_verifier_prompt(entries, len(visuals), self.instruction_mode)
+            verifier_prompt = self._build_verifier_prompt(entries, len(visuals))
             verifier_output = self._run_verifier(original_images, overlay_images, verifier_prompt)
             verdict, _, verifier_feedback = self._parse_verifier_answer(verifier_output)
 
@@ -907,7 +855,7 @@ class STTV(lmms):
                         {
                             "type": "text",
                             "text": (
-                                f"{verifier_message}\nUse the verifier feedback above to correct your " "last <loc> step. You must change at least one coordinate and should not repeat " "the same <loc>. Output only a corrected <loc> step."
+                                f"{verifier_message}\nUse the verifier feedback above to correct your " "last <bbox_2d> step. You must change at least one coordinate and should not repeat " "the same <bbox_2d>. Output only a corrected <bbox_2d> step."
                             ),
                         }
                     ],

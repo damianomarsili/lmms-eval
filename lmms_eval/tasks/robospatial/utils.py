@@ -52,12 +52,11 @@ def _extract_last_answer_tag(text: str) -> Optional[str]:
     if close_match:
         content_end = content_start + close_match.start()
         return text[content_start:content_end].strip()
-    next_tag = re.search(r"(?is)<(reason|depth|loc|verifier|answer)>", text[content_start:])
+    next_tag = re.search(r"(?is)<(reason|depth|bbox_2d|verifier|answer)>", text[content_start:])
     if next_tag:
         content_end = content_start + next_tag.start()
         return text[content_start:content_end].strip()
     return text[content_start:].strip()
-    return None
 
 
 def _point_in_polygon(x: float, y: float, poly: List[Tuple[float, float]]) -> bool:

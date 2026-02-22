@@ -12,6 +12,10 @@ from PIL import Image
 DEFAULT_REPO_ID = "aadarsh99/ConvSeg"
 _CACHE_DIR: Optional[str] = None
 _CACHE_REPO: Optional[str] = None
+BBOX_2D_LINE_PATTERN = re.compile(
+    r'^\s*label\s*=\s*"(?P<label>[^"\n]+?)"\s*,\s*\[(?P<coords>[^\]]+)\]\s*$',
+    re.IGNORECASE,
+)
 
 
 def _get_repo_id(lmms_eval_specific_kwargs: Optional[dict[str, Any]]) -> str:
@@ -128,59 +132,75 @@ def _strip_think_prefix(text: str) -> str:
     return re.sub(r"(?is)^\s*<(?:plan|think)>.*?</(?:plan|think)>\s*", "", text, count=1)
 
 
-def _extract_loc_payload(text: str) -> Optional[str]:
-    matches = re.findall(r"(?is)<loc>(.*?)</loc>", text)
+def _extract_bbox_2d_payload(text: str) -> Optional[str]:
+    matches = re.findall(r"(?is)<bbox_2d>(.*?)</bbox_2d>", text)
     if not matches:
         return None
     return matches[-1].strip()
 
 
-def _parse_loc_points(payload: str, mode: str) -> List[Tuple[float, float]]:
-    points: List[Tuple[float, float]] = []
-    for entry in payload.split(";"):
-        entry = entry.strip()
-        if not entry:
+def _parse_bbox_2d_coords(payload: str) -> List[Tuple[float, ...]]:
+    coords_list: List[Tuple[float, ...]] = []
+    nonempty_line_count = 0
+    for raw_line in payload.splitlines():
+        line = raw_line.strip()
+        if not line:
             continue
-        if ":" in entry:
-            _, entry = entry.split(":", 1)
-        nums = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", entry)]
-        if mode == "point":
-            if len(nums) >= 2:
-                points.append((nums[0], nums[1]))
-        elif mode == "box":
-            if len(nums) >= 4:
-                x1, y1, x2, y2 = nums[:4]
-                points.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0))
-        else:
-            raise ValueError(f"mode must be 'point' or 'box', got {mode}")
-    return points
+        nonempty_line_count += 1
+        match = BBOX_2D_LINE_PATTERN.fullmatch(line)
+        if match is None:
+            return []
+        numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", match.group("coords"))]
+        if len(numbers) not in {2, 4}:
+            return []
+        coords_list.append(tuple(numbers))
+    if nonempty_line_count == 0:
+        return []
+    return coords_list
 
 
-def _parse_loc_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
+def _parse_bbox_2d_points(payload: str, mode: str) -> List[Tuple[float, float]]:
+    points: List[Tuple[float, float]] = []
+    coords_list = _parse_bbox_2d_coords(payload)
+    if not coords_list:
+        return []
+    if mode == "point":
+        for coords in coords_list:
+            if len(coords) != 2:
+                return []
+            points.append((coords[0], coords[1]))
+        return points
+    if mode == "box":
+        for coords in coords_list:
+            if len(coords) != 4:
+                return []
+            x1, y1, x2, y2 = coords
+            points.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0))
+        return points
+    raise ValueError(f"mode must be 'point' or 'box', got {mode}")
+
+
+def _parse_bbox_2d_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
     boxes: List[Tuple[float, float, float, float]] = []
-    entries = [e.strip() for e in payload.split(";") if e.strip()]
-    if not entries:
-        entries = [payload.strip()]
-    for entry in entries:
-        if ":" in entry:
-            _, entry = entry.split(":", 1)
-        nums = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", entry)]
-        for i in range(0, len(nums) - 3, 4):
-            boxes.append((nums[i], nums[i + 1], nums[i + 2], nums[i + 3]))
+    coords_list = _parse_bbox_2d_coords(payload)
+    if not coords_list:
+        return []
+    for coords in coords_list:
+        if len(coords) != 4:
+            return []
+        boxes.append((coords[0], coords[1], coords[2], coords[3]))
     return boxes
 
 
 def _infer_mode_from_payload(payload: str) -> str:
-    for entry in payload.split(";"):
-        entry = entry.strip()
-        if not entry:
-            continue
-        if ":" in entry:
-            _, entry = entry.split(":", 1)
-        nums = re.findall(r"-?\d+(?:\.\d+)?", entry)
-        if len(nums) >= 4:
-            return "box"
-    return "point"
+    coords_list = _parse_bbox_2d_coords(payload)
+    if not coords_list:
+        return "point"
+    has_points = any(len(coords) == 2 for coords in coords_list)
+    has_boxes = any(len(coords) == 4 for coords in coords_list)
+    if has_points and has_boxes:
+        return "invalid"
+    return "box" if has_boxes else "point"
 
 
 def _normalize_to_pixel(point: Tuple[float, float], width: int, height: int) -> Optional[Tuple[int, int]]:
@@ -410,7 +430,7 @@ def convseg_box_miou_from_stats(metrics: List[Any], sizes: List[int] | None = No
 
 def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = _strip_think_prefix(results[0] if results else "")
-    payload = _extract_loc_payload(prediction)
+    payload = _extract_bbox_2d_payload(prediction)
     if not payload:
         return {
             "convseg_point_acc": 0.0,
@@ -423,11 +443,17 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
         mode = os.getenv("MODE", "").strip().lower()
     if not mode:
         mode = _infer_mode_from_payload(payload)
+    if mode not in {"point", "box"}:
+        return {
+            "convseg_point_acc": 0.0,
+            "convseg_box_miou": {"ious": []},
+            "convseg_box_iou_global": {"ious": []},
+        }
     if mode == "box":
         repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
         mask = _to_pil_image(doc["mask"], force_rgb=False, repo_id=repo_id)
         gt_boxes = _mask_to_bboxes(mask)
-        pred_boxes_raw = _parse_loc_boxes(payload)
+        pred_boxes_raw = _parse_bbox_2d_boxes(payload)
         pred_boxes: List[Tuple[float, float, float, float]] = []
         width, height = mask.size
         for box in pred_boxes_raw:
@@ -441,7 +467,7 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
             "convseg_box_iou_global": {"ious": ious},
         }
 
-    points = _parse_loc_points(payload, mode)
+    points = _parse_bbox_2d_points(payload, mode)
     if not points:
         return {
             "convseg_point_acc": 0.0,

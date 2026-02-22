@@ -10,6 +10,14 @@ from PIL import Image
 DEFAULT_REPO_ID = "moondream/refcoco-m"
 _CACHE_DIR: Optional[str] = None
 _CACHE_REPO: Optional[str] = None
+BBOX_2D_LINE_PATTERN = re.compile(
+    r'^\s*label\s*=\s*"(?P<label>[^"\n]+?)"\s*,\s*'
+    r"\[\s*(?P<x1>-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(?P<y1>-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(?P<x2>-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(?P<y2>-?\d+(?:\.\d+)?)\s*\]\s*$",
+    re.IGNORECASE,
+)
 
 
 def _get_repo_id(lmms_eval_specific_kwargs: Optional[dict[str, Any]]) -> str:
@@ -96,24 +104,34 @@ def _strip_think_prefix(text: str) -> str:
     return re.sub(r"(?is)^\s*<(?:plan|think)>.*?</(?:plan|think)>\s*", "", text, count=1)
 
 
-def _extract_loc_payload(text: str) -> Optional[str]:
-    matches = re.findall(r"(?is)<loc>(.*?)</loc>", text)
+def _extract_bbox_2d_payload(text: str) -> Optional[str]:
+    matches = re.findall(r"(?is)<bbox_2d>(.*?)</bbox_2d>", text)
     if not matches:
         return None
     return matches[-1].strip()
 
 
-def _parse_loc_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
+def _parse_bbox_2d_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
     boxes: List[Tuple[float, float, float, float]] = []
-    entries = [e.strip() for e in payload.split(";") if e.strip()]
-    if not entries:
-        entries = [payload.strip()]
-    for entry in entries:
-        if ":" in entry:
-            _, entry = entry.split(":", 1)
-        nums = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", entry)]
-        for i in range(0, len(nums) - 3, 4):
-            boxes.append((nums[i], nums[i + 1], nums[i + 2], nums[i + 3]))
+    nonempty_line_count = 0
+    for raw_line in payload.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        nonempty_line_count += 1
+        match = BBOX_2D_LINE_PATTERN.fullmatch(line)
+        if match is None:
+            return []
+        boxes.append(
+            (
+                float(match.group("x1")),
+                float(match.group("y1")),
+                float(match.group("x2")),
+                float(match.group("y2")),
+            )
+        )
+    if nonempty_line_count == 0:
+        return []
     return boxes
 
 
@@ -345,7 +363,7 @@ def refcoco_m_box_miou(results: List[Any]) -> float:
 
 def refcoco_m_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = _strip_think_prefix(results[0] if results else "")
-    payload = _extract_loc_payload(prediction)
+    payload = _extract_bbox_2d_payload(prediction)
     if not payload:
         return {"refcoco_m_box_miou": 0.0}
 
@@ -378,7 +396,7 @@ def refcoco_m_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[s
         h *= height
     gt_box = (x, y, x + w, y + h)
 
-    pred_boxes_raw = _parse_loc_boxes(payload)
+    pred_boxes_raw = _parse_bbox_2d_boxes(payload)
     pred_boxes: List[Tuple[float, float, float, float]] = []
     for box in pred_boxes_raw:
         norm_box = _normalize_box_to_pixels(box, width, height)

@@ -1,6 +1,6 @@
 You will be given a visual reasoning query.
 You MUST output exactly one tag each in this exact order:
-1) <loc>...</loc>
+1) <bbox_2d>...</bbox_2d>
 2) <reason>...</reason>
 3) <answer>...</answer>
 
@@ -8,11 +8,14 @@ Object detection format:
 {}
 
 Rules:
-- Produce exactly one <loc> block, one <reason> block, and one <answer> block.
+- Produce exactly one <bbox_2d> block, one <reason> block, and one <answer> block.
 - Do not output any <verifier> tags.
-- In <loc>, include all relevant objects from the query and label every box.
-- Use box coordinates in [0,1000] as x_min,y_min,x_max,y_max.
-- Separate multiple objects with semicolons.
+- In <bbox_2d>, include all relevant objects from the query with one line per object.
+- Never open a second <bbox_2d> block to add more objects. Add additional objects as new lines in the same block.
+- Every detected object label in <bbox_2d> must appear in the query text.
+- Every line in <bbox_2d> must use this exact format: label="object_name", [x_min, y_min, x_max, y_max].
+- Use box coordinates in [0,1000] as x_min, y_min, x_max, y_max.
+- Do not use semicolons, object: prefixes, or unlabeled coordinate lines.
 - Keep the reasoning concise and grounded in the image.
 - End your response immediately after </answer>.
 
