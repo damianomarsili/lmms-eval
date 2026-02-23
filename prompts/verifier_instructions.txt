@@ -11,10 +11,11 @@ Task:
 Estimate the Panoptic Quality (PQ) of the predicted boxes for the target classes, and provide concrete corrections that would improve PQ.
 
 Panoptic Quality (PQ):
-- Use the standard intuition: PQ = sum(IoU over matched true positives) / (TP + 0.5*FP + 0.5*FN).
-- A matched pair should have the correct target class and strong overlap (typically IoU >= 0.5 for boxes).
-- Penalize both over-prediction (false positives) and under-prediction (missed objects).
-- Consider localization tightness and whether boxes are on the correct objects.
+- Use this formulation: PQ = (sum of IoUs of one-to-one matched prediction/true-object pairs) / (TP + 0.5*FP + 0.5*FN).
+- Matching is global one-to-one matching that maximizes total IoU (Hungarian-style assignment), per target class.
+- Do NOT use a hard IoU acceptance threshold for matching.
+- Penalize over-prediction (extra boxes -> FP), under-prediction (missed objects -> FN), and loose/misaligned boxes (lower IoU sum).
+- Estimate the score against the visible objects in the image for the target classes.
 
 Output format:
 Return ONLY valid JSON, no extra text, no markdown fences:

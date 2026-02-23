@@ -1,10 +1,17 @@
 Reply with exactly one <bbox_2d> block. Inside <bbox_2d>, write one object per line in this exact format:
 label="object_name", [x_min, y_min, x_max, y_max]
 
+Example (multiple objects in ONE <bbox_2d> block):
+<bbox_2d>
+label="chair", [120, 300, 280, 780]
+label="table", [350, 420, 820, 920]
+label="lamp", [840, 120, 960, 420]
+</bbox_2d>
+
 Rules:
 - Coordinates must be in [0,1000].
 - Use x_min, y_min, x_max, y_max.
-- Include every relevant object.
+- Locate all query-relevant objects and include every relevant object.
 - Do not split objects across multiple <bbox_2d> blocks.
 - Each detected object label must appear in the query text.
 - Do not use semicolons or object: prefixes.

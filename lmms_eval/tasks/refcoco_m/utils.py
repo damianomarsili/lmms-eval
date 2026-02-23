@@ -18,6 +18,15 @@ BBOX_2D_LINE_PATTERN = re.compile(
     r"(?P<y2>-?\d+(?:\.\d+)?)\s*\]\s*$",
     re.IGNORECASE,
 )
+FOUR_NUMBER_LIST_PATTERN = re.compile(
+    r"(?<!\d)"
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)"
+    r"(?!\d)",
+    re.IGNORECASE,
+)
 
 
 def _get_repo_id(lmms_eval_specific_kwargs: Optional[dict[str, Any]]) -> str:
@@ -112,8 +121,9 @@ def _extract_bbox_2d_payload(text: str) -> Optional[str]:
 
 
 def _parse_bbox_2d_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
-    boxes: List[Tuple[float, float, float, float]] = []
+    strict_boxes: List[Tuple[float, float, float, float]] = []
     nonempty_line_count = 0
+    strict_valid = True
     for raw_line in payload.splitlines():
         line = raw_line.strip()
         if not line:
@@ -121,8 +131,9 @@ def _parse_bbox_2d_boxes(payload: str) -> List[Tuple[float, float, float, float]
         nonempty_line_count += 1
         match = BBOX_2D_LINE_PATTERN.fullmatch(line)
         if match is None:
-            return []
-        boxes.append(
+            strict_valid = False
+            break
+        strict_boxes.append(
             (
                 float(match.group("x1")),
                 float(match.group("y1")),
@@ -130,8 +141,19 @@ def _parse_bbox_2d_boxes(payload: str) -> List[Tuple[float, float, float, float]
                 float(match.group("y2")),
             )
         )
-    if nonempty_line_count == 0:
-        return []
+    if strict_valid and nonempty_line_count > 0:
+        return strict_boxes
+
+    boxes: List[Tuple[float, float, float, float]] = []
+    for match in FOUR_NUMBER_LIST_PATTERN.finditer(payload):
+        boxes.append(
+            (
+                float(match.group(1)),
+                float(match.group(2)),
+                float(match.group(3)),
+                float(match.group(4)),
+            )
+        )
     return boxes
 
 
@@ -364,8 +386,7 @@ def refcoco_m_box_miou(results: List[Any]) -> float:
 def refcoco_m_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = _strip_think_prefix(results[0] if results else "")
     payload = _extract_bbox_2d_payload(prediction)
-    if not payload:
-        return {"refcoco_m_box_miou": 0.0}
+    text_for_parsing = payload if payload else prediction
 
     sample = _get_first_sample(doc)
     if not sample:
@@ -396,7 +417,7 @@ def refcoco_m_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[s
         h *= height
     gt_box = (x, y, x + w, y + h)
 
-    pred_boxes_raw = _parse_bbox_2d_boxes(payload)
+    pred_boxes_raw = _parse_bbox_2d_boxes(text_for_parsing)
     pred_boxes: List[Tuple[float, float, float, float]] = []
     for box in pred_boxes_raw:
         norm_box = _normalize_box_to_pixels(box, width, height)

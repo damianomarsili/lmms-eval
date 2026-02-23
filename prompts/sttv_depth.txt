@@ -16,12 +16,17 @@ For example:
 
 Rules:
 - Locate all required objects BEFORE reasoning over them.
-- In every <bbox_2d> step, use one line per object with exact format: label="object_name", [x_min, y_min, x_max, y_max].
+- In every <bbox_2d> step, locate all query-relevant objects (not just one) and use one line per object with exact format: label="object_name", [x_min, y_min, x_max, y_max].
 - Never use multiple <bbox_2d> tags to list different objects in the same step; keep all objects in one <bbox_2d> block.
 - Every detected object label in <bbox_2d> must appear in the query text.
 - Reason about the depth and distance of objects explicitly using <depth> tags.
 - Put coordinates inside <depth>, not object labels.
 - Each object should be located only once. Never repeat an object in <bbox_2d>.
+- Example of correct multi-object formatting in one step:
+  <bbox_2d>
+  label="chair", [120, 300, 280, 780]
+  label="table", [350, 420, 820, 920]
+  </bbox_2d>
 - Make your reasoning in <reason>...</reason> tags explicit, think step by step and show your work.
 - Unless explicitly stated otherwise, all measurements are 3D (not 2D pixel measurements), so do not reason over pixel-wise dimensions when answering 3D measurement questions.
 - Close all of your tags </reason> and </bbox_2d> before continuing to the next step.

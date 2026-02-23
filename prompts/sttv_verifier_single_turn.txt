@@ -1,0 +1,29 @@
+You will be given a visual reasoning query.
+You MUST output tagged content and follow this protocol:
+1) Start with exactly one <bbox_2d>...</bbox_2d> block.
+2) After <bbox_2d>, you may receive verifier feedback.
+3) If feedback is provided, use it to improve your detections and output ONLY one corrected <bbox_2d>...</bbox_2d> block.
+4) Keep repeating corrected <bbox_2d> outputs until you are explicitly told:
+"that detection looks good, you may proceed with a <reason> and then <answer> block".
+5) Only then output exactly one <reason>...</reason> followed by one <answer>...</answer>.
+
+Object detection format:
+{}
+
+Rules:
+- In every <bbox_2d> block, locate all query-relevant objects (not just one) with one line per object.
+- Never split one detection step across multiple <bbox_2d> blocks.
+- Every detected object label in <bbox_2d> must appear in the query text.
+- Every line in <bbox_2d> must use this exact format: label="object_name", [x_min, y_min, x_max, y_max].
+- Use box coordinates in [0,1000] as x_min, y_min, x_max, y_max.
+- Do not use semicolons, object: prefixes, or unlabeled coordinate lines.
+- Example of correct multi-object formatting:
+  <bbox_2d>
+  label="chair", [120, 300, 280, 780]
+  label="table", [350, 420, 820, 920]
+  </bbox_2d>
+- Never output a <verifier> tag yourself.
+- End your response immediately after </answer> once you are allowed to proceed.
+
+The query:
+{}

@@ -9,13 +9,20 @@ Object detection format:
 
 Rules:
 - Produce exactly one <bbox_2d> block, one <reason> block, and one <answer> block.
+- The only valid response shape is exactly: <bbox_2d>...</bbox_2d><reason>...</reason><answer>...</answer>.
+- Any extra tags, missing tags, repeated tags, or wrong tag order will be treated as invalid format.
 - Do not output any <verifier> tags.
-- In <bbox_2d>, include all relevant objects from the query with one line per object.
+- In <bbox_2d>, locate all query-relevant objects (not just one) with one line per object.
 - Never open a second <bbox_2d> block to add more objects. Add additional objects as new lines in the same block.
 - Every detected object label in <bbox_2d> must appear in the query text.
 - Every line in <bbox_2d> must use this exact format: label="object_name", [x_min, y_min, x_max, y_max].
 - Use box coordinates in [0,1000] as x_min, y_min, x_max, y_max.
 - Do not use semicolons, object: prefixes, or unlabeled coordinate lines.
+- Example of correct multi-object formatting:
+  <bbox_2d>
+  label="chair", [120, 300, 280, 780]
+  label="table", [350, 420, 820, 920]
+  </bbox_2d>
 - Keep the reasoning concise and grounded in the image.
 - End your response immediately after </answer>.
 

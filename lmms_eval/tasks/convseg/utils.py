@@ -16,6 +16,15 @@ BBOX_2D_LINE_PATTERN = re.compile(
     r'^\s*label\s*=\s*"(?P<label>[^"\n]+?)"\s*,\s*\[(?P<coords>[^\]]+)\]\s*$',
     re.IGNORECASE,
 )
+FOUR_NUMBER_LIST_PATTERN = re.compile(
+    r"(?<!\d)"
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)"
+    r"(?!\d)",
+    re.IGNORECASE,
+)
 
 
 def _get_repo_id(lmms_eval_specific_kwargs: Optional[dict[str, Any]]) -> str:
@@ -182,25 +191,45 @@ def _parse_bbox_2d_points(payload: str, mode: str) -> List[Tuple[float, float]]:
 
 def _parse_bbox_2d_boxes(payload: str) -> List[Tuple[float, float, float, float]]:
     boxes: List[Tuple[float, float, float, float]] = []
+
+    # Preferred strict format.
     coords_list = _parse_bbox_2d_coords(payload)
-    if not coords_list:
-        return []
-    for coords in coords_list:
-        if len(coords) != 4:
-            return []
-        boxes.append((coords[0], coords[1], coords[2], coords[3]))
+    if coords_list:
+        for coords in coords_list:
+            if len(coords) != 4:
+                return []
+            boxes.append((coords[0], coords[1], coords[2], coords[3]))
+        return boxes
+
+    # Detection-only fallback: parse any 4-number comma-separated list.
+    for match in FOUR_NUMBER_LIST_PATTERN.finditer(payload):
+        boxes.append(
+            (
+                float(match.group(1)),
+                float(match.group(2)),
+                float(match.group(3)),
+                float(match.group(4)),
+            )
+        )
     return boxes
 
 
 def _infer_mode_from_payload(payload: str) -> str:
     coords_list = _parse_bbox_2d_coords(payload)
+    if coords_list:
+        has_points = any(len(coords) == 2 for coords in coords_list)
+        has_boxes = any(len(coords) == 4 for coords in coords_list)
+        if has_points and has_boxes:
+            return "invalid"
+        return "box" if has_boxes else "point"
+
+    # If strict parsing fails but 4-number lists exist, treat as box mode.
+    if _parse_bbox_2d_boxes(payload):
+        return "box"
+
     if not coords_list:
         return "point"
-    has_points = any(len(coords) == 2 for coords in coords_list)
-    has_boxes = any(len(coords) == 4 for coords in coords_list)
-    if has_points and has_boxes:
-        return "invalid"
-    return "box" if has_boxes else "point"
+    return "point"
 
 
 def _normalize_to_pixel(point: Tuple[float, float], width: int, height: int) -> Optional[Tuple[int, int]]:
@@ -431,6 +460,28 @@ def convseg_box_miou_from_stats(metrics: List[Any], sizes: List[int] | None = No
 def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, float]:
     prediction = _strip_think_prefix(results[0] if results else "")
     payload = _extract_bbox_2d_payload(prediction)
+    text_for_parsing = payload if payload else prediction
+
+    # Detection-first path: for box-style outputs, parse all 4-number lists
+    # even if labels/tags are missing or malformed.
+    pred_boxes_raw = _parse_bbox_2d_boxes(text_for_parsing)
+    if pred_boxes_raw:
+        repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
+        mask = _to_pil_image(doc["mask"], force_rgb=False, repo_id=repo_id)
+        gt_boxes = _mask_to_bboxes(mask)
+        pred_boxes: List[Tuple[float, float, float, float]] = []
+        width, height = mask.size
+        for box in pred_boxes_raw:
+            norm_box = _normalize_box_to_pixels(box, width, height)
+            if norm_box is not None:
+                pred_boxes.append(norm_box)
+        ious = _match_boxes(gt_boxes, pred_boxes)
+        return {
+            "convseg_point_acc": 0.0,
+            "convseg_box_miou": {"ious": ious},
+            "convseg_box_iou_global": {"ious": ious},
+        }
+
     if not payload:
         return {
             "convseg_point_acc": 0.0,
@@ -450,21 +501,10 @@ def convseg_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str
             "convseg_box_iou_global": {"ious": []},
         }
     if mode == "box":
-        repo_id = str(doc.get("_convseg_repo") or DEFAULT_REPO_ID)
-        mask = _to_pil_image(doc["mask"], force_rgb=False, repo_id=repo_id)
-        gt_boxes = _mask_to_bboxes(mask)
-        pred_boxes_raw = _parse_bbox_2d_boxes(payload)
-        pred_boxes: List[Tuple[float, float, float, float]] = []
-        width, height = mask.size
-        for box in pred_boxes_raw:
-            norm_box = _normalize_box_to_pixels(box, width, height)
-            if norm_box is not None:
-                pred_boxes.append(norm_box)
-        ious = _match_boxes(gt_boxes, pred_boxes)
         return {
             "convseg_point_acc": 0.0,
-            "convseg_box_miou": {"ious": ious},
-            "convseg_box_iou_global": {"ious": ious},
+            "convseg_box_miou": {"ious": []},
+            "convseg_box_iou_global": {"ious": []},
         }
 
     points = _parse_bbox_2d_points(payload, mode)

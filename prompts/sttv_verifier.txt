@@ -9,10 +9,15 @@ For example (each tag is kept blank, this is JUST an example of the round-based 
 
 Rules:
 - Locate all required objects BEFORE reasoning over them.
-- In every <bbox_2d> step, use one line per object with exact format: label="object_name", [x_min, y_min, x_max, y_max].
+- In every <bbox_2d> step, locate all query-relevant objects (not just one) and use one line per object with exact format: label="object_name", [x_min, y_min, x_max, y_max].
 - Never use multiple <bbox_2d> tags to list different objects in the same step; keep all objects in one <bbox_2d> block.
 - Every detected object label in <bbox_2d> must appear in the query text.
 - Each object should be located only once. Never repeat an object in <bbox_2d>.
+- Example of correct multi-object formatting in one step:
+  <bbox_2d>
+  label="chair", [120, 300, 280, 780]
+  label="table", [350, 420, 820, 920]
+  </bbox_2d>
 - Make your reasoning in <reason>...</reason> tags explicit, think step by step and show your work.
 - Close all of your tags </reason> and </bbox_2d> before continuing to the next step.
 - As soon as you have enough information, you must predict the answer <answer>...</answer>
