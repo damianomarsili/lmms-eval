@@ -1,0 +1,3 @@
+task: reasonseg
+test_split: test
+include: _default_template_yaml
