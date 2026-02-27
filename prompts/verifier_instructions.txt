@@ -9,6 +9,7 @@ Inputs:
 
 Task:
 Estimate the Panoptic Quality (PQ) of the predicted boxes for the target classes, and provide concrete corrections that would improve PQ.
+Corrections must be explicit and directly usable for editing boxes.
 
 Panoptic Quality (PQ):
 - Use this formulation: PQ = (sum of IoUs of one-to-one matched prediction/true-object pairs) / (TP + 0.5*FP + 0.5*FN).
@@ -19,15 +20,26 @@ Panoptic Quality (PQ):
 
 Output format:
 Return ONLY valid JSON, no extra text, no markdown fences:
-{
+{{
   "pq_score_estimate": 0.0,
   "corrections": [
     "short action to improve prediction 1",
     "short action to improve prediction 2"
   ]
-}
+}}
 
 Requirements:
 - pq_score_estimate must be a float in [0,1].
 - corrections must be actionable and specific (add/remove/move/resize/relabel predictions).
+- Corrections may either:
+  1) reference a specific existing prediction (index and/or label), or
+  2) flag a missing target object and request adding a new box.
+- For box edits, state geometric changes in box-edge terms:
+  x_min/x_max/y_min/y_max too far left/right/up/down, box too wide/narrow/tall/short, shift left/right/up/down, expand/shrink in a direction.
+- Prefer concrete statements like:
+  "Prediction 2 (lamp): x_max is too far right and y_max is too low; move right edge left and bottom edge up."
+- Also valid for misses:
+  "Missing target object 'lamp' near the top-left shelf; add a new box around it."
+- Avoid vague statements like:
+  "Fix the lamp box."
 - If predictions are already strong, still provide at least one small improvement to boost PQ further.

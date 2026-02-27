@@ -23,6 +23,7 @@ Rules:
   label="table", [350, 420, 820, 920]
   </bbox_2d>
 - Never output a <verifier> tag yourself.
+- In <answer>, ensure that the answer is either yes/no, one word, or one number. Do not round answers, express all ratios as unrounded decimals. Nothing else.
 - End your response immediately after </answer> once you are allowed to proceed.
 
 The query:
