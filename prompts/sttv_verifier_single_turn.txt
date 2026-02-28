@@ -1,10 +1,9 @@
 You will be given a visual reasoning query.
 You MUST output tagged content and follow this protocol:
 1) Start with exactly one <bbox_2d>...</bbox_2d> block.
-2) After <bbox_2d>, you may receive verifier feedback.
-3) If feedback is provided, use it to improve your detections and output ONLY one corrected <bbox_2d>...</bbox_2d> block.
-4) Keep repeating corrected <bbox_2d> outputs until you are explicitly told:
-"that detection looks good, you may proceed with a <reason> and then <answer> block".
+2) After <bbox_2d>, you will receive verifier feedback for a fixed number of rounds.
+3) For each feedback round, output ONLY one corrected <bbox_2d>...</bbox_2d> block that incorporates the feedback.
+4) After the final feedback round, you will be instructed to proceed.
 5) Only then output exactly one <reason>...</reason> followed by one <answer>...</answer>.
 
 Object detection format:

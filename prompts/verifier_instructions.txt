@@ -8,7 +8,7 @@ Inputs:
 {preds}
 
 Task:
-Estimate the Panoptic Quality (PQ) of the predicted boxes for the target classes, and provide concrete corrections that would improve PQ.
+Estimate localization quality components for the predicted boxes and provide concrete corrections that would improve PQ.
 Corrections must be explicit and directly usable for editing boxes.
 
 Panoptic Quality (PQ):
@@ -21,7 +21,9 @@ Panoptic Quality (PQ):
 Output format:
 Return ONLY valid JSON, no extra text, no markdown fences:
 {{
-  "pq_score_estimate": 0.0,
+  "avg_iou_estimate": 0.0,
+  "false_positive_count": 0,
+  "false_negative_count": 0,
   "corrections": [
     "short action to improve prediction 1",
     "short action to improve prediction 2"
@@ -29,8 +31,14 @@ Return ONLY valid JSON, no extra text, no markdown fences:
 }}
 
 Requirements:
-- pq_score_estimate must be a float in [0,1].
+- avg_iou_estimate: average IoU over predicted boxes compared to the best ground-truth box each prediction appears to target, in [0,1].
+- false_positive_count: number of predicted boxes that do not correspond to a valid target instance/label.
+- false_negative_count: number of target instances/labels that should be present but are missing.
+- We compute PQ from your estimates as:
+  PQ_est = (avg_iou_estimate * TP_est) / (TP_est + 0.5*false_positive_count + 0.5*false_negative_count),
+  where TP_est = max(0, num_predicted_boxes - false_positive_count).
 - corrections must be actionable and specific (add/remove/move/resize/relabel predictions).
+- corrections should explicitly aim to improve IoUs and/or reduce false positives and/or reduce false negatives.
 - Corrections may either:
   1) reference a specific existing prediction (index and/or label), or
   2) flag a missing target object and request adding a new box.
