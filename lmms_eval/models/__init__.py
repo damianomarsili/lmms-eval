@@ -78,6 +78,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "videochat2": "VideoChat2",
     "videollama3": "VideoLLaMA3",
     "video_llava": "VideoLLaVA",
+    "vigorl": "ViGoRL",
     "vila": "VILA",
     "vita": "VITA",
     "vllm": "VLLM",
