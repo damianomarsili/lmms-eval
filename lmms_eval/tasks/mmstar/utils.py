@@ -42,27 +42,22 @@ def mmstar_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 def exact_match(pred, gt):
     """Brought from MMStar"""
     answer = gt.lower().replace("\n", " ").strip()
-    predict_raw = _strip_think_prefix(pred).lower().replace("\n", " ").strip()
+    predict_raw = _clean_prediction_text(pred).lower().replace("\n", " ").strip()
 
-    # If answer is a single char, look for the last standalone letter in the prediction
-    if len(answer) == 1:
-        hits = re.findall(r"(?<![a-z])([a-z])(?![a-z])", predict_raw, flags=re.IGNORECASE)
-        if hits:
-            if hits[-1] == answer:
-                return 1.0
+    if len(answer) == 1 and answer.isalpha():
+        pred_letter = _extract_predicted_letter(predict_raw, {answer})
+        return 1.0 if pred_letter == answer else 0.0
 
-    try:
-        if answer == predict_raw[0]:
-            return 1.0
-        elif predict_raw[0] == "(" and answer == predict_raw[1]:
-            return 1.0
-        elif predict_raw[0:7] == "option " and answer == predict_raw[7]:
-            return 1.0
-        elif predict_raw[0:14] == "the answer is " and answer == predict_raw[14]:
-            return 1.0
-    except Exception:
-        return 0.0
+    if answer == predict_raw:
+        return 1.0
     return 0.0
+
+
+def _clean_prediction_text(text: str) -> str:
+    text = _strip_think_prefix(text)
+    # Keep the content and remove XML-like wrappers such as <answer>...</answer>
+    text = re.sub(r"</?[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _normalize_text(text: str) -> str:
@@ -108,6 +103,25 @@ def _extract_option_map_from_question(question: str) -> Dict[str, str]:
     if len(option_map) >= 2:
         return option_map
 
+    # Inline format: "Options: A: ..., B: ..., C: ..."
+    options_inline = re.search(r"options?\s*:\s*(.+)$", question, flags=re.IGNORECASE | re.DOTALL)
+    options_text = options_inline.group(1) if options_inline else question
+    # Trim common trailing instruction lines appended after options.
+    options_text = re.split(r"\n\s*(?:answer\s+with|please\s+answer)\b", options_text, flags=re.IGNORECASE)[0]
+    options_text = options_text.strip()
+    option_map = {}
+    colon_inline_matches = re.findall(
+        r"(?:^|[\n,;]\s*)([A-Z])\s*[:\.\)]\s*(.*?)(?=(?:[\n,;]\s*[A-Z]\s*[:\.\)]\s*)|$)",
+        options_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for letter, text in colon_inline_matches:
+        normalized = _normalize_text(text)
+        if normalized:
+            option_map[letter.lower()] = normalized
+    if len(option_map) >= 2:
+        return option_map
+
     # Line format: "A. ...", "B) ...", "C: ..."
     option_map = {}
     for line in question.splitlines():
@@ -121,7 +135,7 @@ def _extract_option_map_from_question(question: str) -> Dict[str, str]:
 
 
 def _extract_predicted_letter(prediction: str, valid_letters) -> str:
-    predict_raw = _strip_think_prefix(prediction).lower().replace("\n", " ").strip()
+    predict_raw = _clean_prediction_text(prediction).lower().replace("\n", " ").strip()
     if not predict_raw:
         return ""
 
@@ -129,19 +143,16 @@ def _extract_predicted_letter(prediction: str, valid_letters) -> str:
     if not valid_letters:
         return ""
 
-    hits = re.findall(r"(?<![a-z])([a-z])(?![a-z])", predict_raw, flags=re.IGNORECASE)
-    if hits:
-        candidate = hits[-1].lower()
-        if candidate in valid_letters:
-            return candidate
-
     checks = [
-        (r"^\(\s*([a-z])\s*\)", 1),
-        (r"^option\s+([a-z])\b", 1),
-        (r"^the answer is\s+([a-z])\b", 1),
-        (r"^answer\s*[:\-]?\s*([a-z])\b", 1),
-        (r"^([a-z])[\.\)]", 1),
-        (r"^([a-z])\b", 1),
+        # Strict one-token letter responses (A / (A) / A.)
+        (r"^\s*\(?([a-z])\)?[\.\)]?\s*$", 1),
+        # Explicit declarations where the selected letter is standalone.
+        (r"^\s*(?:option|choice|answer)\s*[:\-]?\s*\(?([a-z])\)?[\.\)]?\s*$", 1),
+        (r"^\s*(?:the\s+)?(?:correct\s+)?(?:answer|option|choice)\s*(?:is|:)\s*\(?([a-z])\)?[\.\)]?\s*$", 1),
+        (r"^\s*(?:i\s+choose|i\s+pick|choose|pick|select)\s+\(?([a-z])\)?[\.\)]?\s*$", 1),
+        # Common explicit forms with short trailing qualifier.
+        (r"^\s*(?:option|choice)\s+\(?([a-z])\)?\s+is\s+correct\.?\s*$", 1),
+        (r"^\s*(?:answer|the answer)\s+is\s+\(?([a-z])\)?\s*$", 1),
     ]
     for pattern, group_id in checks:
         match = re.search(pattern, predict_raw, flags=re.IGNORECASE)
@@ -161,7 +172,7 @@ def _map_prediction_to_option_letter(prediction: str, option_map: Dict[str, str]
     if predicted_letter:
         return predicted_letter
 
-    response = _strip_think_prefix(prediction)
+    response = _clean_prediction_text(prediction)
     response_candidates = []
     normalized_response = _normalize_text(response)
     if normalized_response:
