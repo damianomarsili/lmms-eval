@@ -23,7 +23,7 @@ FONT_SCALE = 0.022
 BOX_OUTLINE_SCALE = 0.005
 LABEL_PADDING = 2
 BBOX_2D_ENTRY_PATTERN = re.compile(
-    r'^\s*label\s*=\s*"(?P<label>[^"\n]+?)"\s*,\s*\[(?P<coords>[^\]]+)\]\s*$',
+    r'^\s*(?P<idx>\d+)\s*:\s*label\s*=\s*"(?P<label>[^"\n]+?)"\s*,\s*\[(?P<coords>[^\]]+)\]\s*$',
     flags=re.IGNORECASE,
 )
 
@@ -326,6 +326,12 @@ class STTV(lmms):
             match = BBOX_2D_ENTRY_PATTERN.fullmatch(line)
             if match is None:
                 return []
+            try:
+                idx = int(match.group("idx"))
+            except (TypeError, ValueError):
+                return []
+            if idx != len(entries) + 1:
+                return []
 
             label = match.group("label").strip()
             if not label:
@@ -577,11 +583,7 @@ class STTV(lmms):
         max_final_answer_tokens = 64
         final_answer_prompt = "I can now predict the final answer which is: "
         final_fail_prompt = "I am unable to locate the objects correctly. Provide a final <reason> step and " "then the final <answer>."
-        bbox_line_format = (
-            'label="object_name", [x_min, y_min, x_max, y_max]'
-            if self.instruction_mode == "box"
-            else 'label="object_name", [x, y]'
-        )
+        bbox_line_format = '1: label="object_name", [x_min, y_min, x_max, y_max]'
         empty_loc_prompt = "You did not place an object in your <bbox_2d> tags, please review the format and try again."
         missing_label_prompt = (
             f"Missing required label syntax. Use one line per object as: {bbox_line_format}."

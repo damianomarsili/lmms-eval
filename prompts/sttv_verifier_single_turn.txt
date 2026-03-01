@@ -13,13 +13,14 @@ Rules:
 - In every <bbox_2d> block, locate all query-relevant objects (not just one) with one line per object.
 - Never split one detection step across multiple <bbox_2d> blocks.
 - Every detected object label in <bbox_2d> must appear in the query text.
-- Every line in <bbox_2d> must use this exact format: label="object_name", [x_min, y_min, x_max, y_max].
+- Every line in <bbox_2d> must use this exact format: 1: label="object_name", [x_min, y_min, x_max, y_max].
+- Indices must be sequential starting from 1.
 - Use box coordinates in [0,1000] as x_min, y_min, x_max, y_max.
 - Do not use semicolons, object: prefixes, or unlabeled coordinate lines.
 - Example of correct multi-object formatting:
   <bbox_2d>
-  label="chair", [120, 300, 280, 780]
-  label="table", [350, 420, 820, 920]
+  1: label="chair", [120, 300, 280, 780]
+  2: label="table", [350, 420, 820, 920]
   </bbox_2d>
 - Never output a <verifier> tag yourself.
 - In <answer>, ensure that the answer is either yes/no, one word, or one number. Do not round answers, express all ratios as unrounded decimals. Nothing else.

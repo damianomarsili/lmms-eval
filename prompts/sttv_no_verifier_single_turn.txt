@@ -15,13 +15,14 @@ Rules:
 - In <bbox_2d>, locate all query-relevant objects (not just one) with one line per object.
 - Never open a second <bbox_2d> block to add more objects. Add additional objects as new lines in the same block.
 - Every detected object label in <bbox_2d> must appear in the query text.
-- Every line in <bbox_2d> must use this exact format: label="object_name", [x_min, y_min, x_max, y_max].
+- Every line in <bbox_2d> must use this exact format: 1: label="object_name", [x_min, y_min, x_max, y_max].
+- Indices must be sequential starting from 1.
 - Use box coordinates in [0,1000] as x_min, y_min, x_max, y_max.
 - Do not use semicolons, object: prefixes, or unlabeled coordinate lines.
 - Example of correct multi-object formatting:
   <bbox_2d>
-  label="chair", [120, 300, 280, 780]
-  label="table", [350, 420, 820, 920]
+  1: label="chair", [120, 300, 280, 780]
+  2: label="table", [350, 420, 820, 920]
   </bbox_2d>
 - Keep the reasoning concise and grounded in the image.
 - End your response immediately after </answer>.

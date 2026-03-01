@@ -3,6 +3,7 @@ import json
 import os
 import re
 from collections import defaultdict
+from typing import Dict
 
 from loguru import logger as eval_logger
 
@@ -64,6 +65,130 @@ def exact_match(pred, gt):
     return 0.0
 
 
+def _normalize_text(text: str) -> str:
+    text = text.lower().strip()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _strip_leading_choice_label(text: str, valid_letters):
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned
+    letters = "".join(sorted({str(letter).lower() for letter in valid_letters if str(letter)}))
+    if not letters:
+        return cleaned
+
+    patterns = [
+        rf"^\(\s*[{letters}]\s*\)\s*",
+        rf"^\[\s*[{letters}]\s*\]\s*",
+        rf"^[{letters}]\s*[\.\):\-]\s*",
+        rf"^[{letters}]\s+",
+        r"^option\s+[a-z]\s*[\.\):\-]?\s*",
+    ]
+    for pattern in patterns:
+        updated = re.sub(pattern, "", cleaned, count=1, flags=re.IGNORECASE)
+        if updated != cleaned:
+            return updated.strip()
+    return cleaned
+
+
+def _extract_option_map_from_question(question: str) -> Dict[str, str]:
+    option_map: Dict[str, str] = {}
+    if not isinstance(question, str) or not question.strip():
+        return option_map
+
+    # Inline format: "(A) ... (B) ... (C) ..."
+    inline_matches = re.findall(r"\(([A-Z])\)\s*(.*?)(?=(?:\s*\([A-Z]\)\s*)|$)", question, flags=re.IGNORECASE | re.DOTALL)
+    for letter, text in inline_matches:
+        normalized = _normalize_text(text)
+        if normalized and letter.lower() not in option_map:
+            option_map[letter.lower()] = normalized
+
+    if len(option_map) >= 2:
+        return option_map
+
+    # Line format: "A. ...", "B) ...", "C: ..."
+    option_map = {}
+    for line in question.splitlines():
+        match = re.match(r"^\s*([A-Z])[\.\):\-]\s*(.+)\s*$", line, flags=re.IGNORECASE)
+        if match:
+            letter, text = match.group(1).lower(), match.group(2)
+            normalized = _normalize_text(text)
+            if normalized:
+                option_map[letter] = normalized
+    return option_map if len(option_map) >= 2 else {}
+
+
+def _extract_predicted_letter(prediction: str, valid_letters) -> str:
+    predict_raw = _strip_think_prefix(prediction).lower().replace("\n", " ").strip()
+    if not predict_raw:
+        return ""
+
+    valid_letters = {str(letter).lower() for letter in valid_letters if str(letter)}
+    if not valid_letters:
+        return ""
+
+    hits = re.findall(r"(?<![a-z])([a-z])(?![a-z])", predict_raw, flags=re.IGNORECASE)
+    if hits:
+        candidate = hits[-1].lower()
+        if candidate in valid_letters:
+            return candidate
+
+    checks = [
+        (r"^\(\s*([a-z])\s*\)", 1),
+        (r"^option\s+([a-z])\b", 1),
+        (r"^the answer is\s+([a-z])\b", 1),
+        (r"^answer\s*[:\-]?\s*([a-z])\b", 1),
+        (r"^([a-z])[\.\)]", 1),
+        (r"^([a-z])\b", 1),
+    ]
+    for pattern, group_id in checks:
+        match = re.search(pattern, predict_raw, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(group_id).lower()
+            if candidate in valid_letters:
+                return candidate
+    return ""
+
+
+def _map_prediction_to_option_letter(prediction: str, option_map: Dict[str, str]) -> str:
+    if not option_map:
+        return ""
+
+    valid_letters = set(option_map.keys())
+    predicted_letter = _extract_predicted_letter(prediction, valid_letters)
+    if predicted_letter:
+        return predicted_letter
+
+    response = _strip_think_prefix(prediction)
+    response_candidates = []
+    normalized_response = _normalize_text(response)
+    if normalized_response:
+        response_candidates.append(normalized_response)
+    stripped_response = _normalize_text(_strip_leading_choice_label(response, valid_letters))
+    if stripped_response and stripped_response != normalized_response:
+        response_candidates.append(stripped_response)
+
+    for candidate in response_candidates:
+        matches = [letter for letter, option_text in option_map.items() if candidate == option_text]
+        if len(matches) == 1:
+            return matches[0]
+
+    for candidate in response_candidates:
+        padded_candidate = f" {candidate} "
+        contains = [letter for letter, option_text in option_map.items() if f" {option_text} " in padded_candidate]
+        if len(contains) == 1:
+            return contains[0]
+
+        tokens = set(candidate.split())
+        token_matches = [letter for letter, option_text in option_map.items() if " " not in option_text and option_text in tokens]
+        if len(token_matches) == 1:
+            return token_matches[0]
+
+    return ""
+
+
 def mmstar_process_results(doc, results):
     """
     Args:
@@ -76,6 +201,14 @@ def mmstar_process_results(doc, results):
     gt = doc["answer"]
 
     score = exact_match(pred, gt)
+    if score == 0.0:
+        gt_letter = str(gt).strip().strip("()").lower()
+        option_map = _extract_option_map_from_question(doc.get("question", ""))
+        if gt_letter in option_map:
+            mapped_letter = _map_prediction_to_option_letter(pred, option_map)
+            if mapped_letter == gt_letter:
+                score = 1.0
+
     category = doc["category"]
     l2_category = doc["l2_category"]
     return {category: {"question_id": doc["index"], "l2_category": l2_category, "score": score}, "average": {"question_id": doc["index"], "l2_category": l2_category, "score": score}}
