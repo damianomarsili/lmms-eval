@@ -211,18 +211,39 @@ def mmstar_process_results(doc, results):
     pred = _strip_think_prefix(results[0])
     gt = doc["answer"]
 
-    score = exact_match(pred, gt)
-    if score == 0.0:
-        gt_letter = str(gt).strip().strip("()").lower()
-        option_map = _extract_option_map_from_question(doc.get("question", ""))
-        if gt_letter in option_map:
-            mapped_letter = _map_prediction_to_option_letter(pred, option_map)
-            if mapped_letter == gt_letter:
-                score = 1.0
+    gt_letter = str(gt).strip().strip("()").lower()
+    option_map = _extract_option_map_from_question(doc.get("question", ""))
+
+    valid_letters = set(option_map.keys())
+    if not valid_letters and len(gt_letter) == 1 and gt_letter.isalpha():
+        valid_letters = {gt_letter}
+
+    direct_letter = _extract_predicted_letter(pred, valid_letters) if valid_letters else ""
+    mapped_letter = _map_prediction_to_option_letter(pred, option_map) if option_map else direct_letter
+
+    if len(gt_letter) == 1 and gt_letter.isalpha():
+        score = 1.0 if mapped_letter == gt_letter else 0.0
+    else:
+        score = exact_match(pred, gt)
+
+    if direct_letter:
+        match_type = "direct_letter"
+    elif mapped_letter:
+        match_type = "text_mapped"
+    else:
+        match_type = "no_match"
 
     category = doc["category"]
     l2_category = doc["l2_category"]
-    return {category: {"question_id": doc["index"], "l2_category": l2_category, "score": score}, "average": {"question_id": doc["index"], "l2_category": l2_category, "score": score}}
+    result_payload = {
+        "question_id": doc["index"],
+        "l2_category": l2_category,
+        "score": score,
+        "gt_letter": gt_letter.upper() if len(gt_letter) == 1 and gt_letter.isalpha() else str(gt),
+        "pred_letter": mapped_letter.upper() if mapped_letter else "",
+        "match_type": match_type,
+    }
+    return {category: result_payload, "average": result_payload}
 
 
 def mmstar_aggregate_results(results):
