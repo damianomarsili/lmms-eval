@@ -29,6 +29,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "gpt4o": "GPT4O",
     "gemma3": "Gemma3",
     "gpt4v": "GPT4V",
+    "grit": "GRIT",
     "idefics2": "Idefics2",
     "instructblip": "InstructBLIP",
     "internvideo2": "InternVideo2",
