@@ -13,8 +13,11 @@ Focus on improving box tightness/alignment, removing over-predicted boxes, and a
 The predicted boxes are provided with explicit coordinates; use those coordinates in your feedback.
 
 Output format:
-Return ONLY plain text corrections (no JSON, no markdown, no preamble).
-You may write multiple correction lines/sentences.
+Return ONLY plain text corrections with one action per line (no JSON, no markdown, no preamble).
+Each line MUST be exactly one of:
+1) EDIT <idx>: <explicit coordinate edit instructions>
+2) REMOVE <idx>
+3) ADD label="object_name", [x_min, y_min, x_max, y_max]
 
 Requirements:
 - corrections must be actionable and specific (add/remove/move/resize/relabel predictions).
@@ -22,11 +25,11 @@ Requirements:
   1) existing boxes (how to move/resize/relabel/remove), and
   2) missing objects that should be added.
 - Explicitly call out over-predictions that should be removed and under-predictions that should be added.
-- For edits to existing boxes, state geometric changes in box-edge terms:
-  "Prediction 2 (lamp): move x_min from ~420 to ~460 and y_max from ~730 to ~700."
-- Also valid for misses:
-  "Missing another lamp to the left of Prediction 1 (lamp); add a new box around it."
+- For EDIT lines, use geometric edge terms with concrete values:
+  "EDIT 2: move x_min from ~420 to ~460 and y_max from ~730 to ~700."
+- For ADD lines, provide an explicit label and coordinates:
+  "ADD label=\"lamp\", [430, 120, 560, 740]"
 - Avoid vague statements like:
-  "Fix the lamp box."
+  "EDIT 2: fix the lamp box."
 - If predictions are already strong, provide at least one small refinement.
 - Box edits can be small in magnitude for boxes that are already very good, or large for boxes that are very bad.

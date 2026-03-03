@@ -7,8 +7,10 @@ from lmms_eval.models.simple.qwen2_5_vl import Qwen2_5_VL
 
 
 GRIT_PROMPT_SUFFIX = (
-    "\n\nAfter the thought process, provide a concise answer in the format:\n"
-    "<answer> your_answer"
+    " First, think between <think> and </think> while output necessary coordinates "
+    "needed to answer the question in JSON with key 'bbox_2d'. Then, based on the "
+    "thinking contents and coordinates, rethink between <rethink> </rethink> and "
+    "then answer the question after <answer>."
 )
 
 
@@ -37,7 +39,7 @@ class GRIT(Qwen2_5_VL):
         use_custom_video_loader: Optional[bool] = False,
         fps: Optional[float] = None,
         max_image_size: Optional[int] = None,
-        system_prompt: Optional[str] = "You are a helpful assistant.",
+        system_prompt: Optional[str] = "",
         interleave_visuals: Optional[bool] = False,
         reasoning_prompt: Optional[str] = GRIT_PROMPT_SUFFIX,
         **kwargs,
@@ -74,5 +76,32 @@ class GRIT(Qwen2_5_VL):
         return text
 
     def generate_until(self, requests: list[Instance]) -> list[str]:
-        outputs = super().generate_until(requests)
-        return [self._ensure_answer_tag_closed(output) for output in outputs]
+        original_arguments = [req.arguments for req in requests]
+        try:
+            for req in requests:
+                args = list(req.arguments if isinstance(req.arguments, tuple) else (req.arguments,))
+                if not args:
+                    continue
+
+                context = args[0]
+                if isinstance(context, str):
+                    stripped = context.strip()
+                    if not stripped.lower().startswith("question:"):
+                        args[0] = f"Question: {stripped}"
+                    else:
+                        args[0] = stripped
+
+                if len(args) > 1 and isinstance(args[1], dict):
+                    gen_kwargs = dict(args[1])
+                    gen_kwargs.setdefault("temperature", 0.001)
+                    gen_kwargs.setdefault("max_new_tokens", 512)
+                    gen_kwargs.setdefault("num_beams", 1)
+                    args[1] = gen_kwargs
+
+                req.arguments = tuple(args)
+
+            outputs = super().generate_until(requests)
+            return [self._ensure_answer_tag_closed(output) for output in outputs]
+        finally:
+            for req, original in zip(requests, original_arguments):
+                req.arguments = original
