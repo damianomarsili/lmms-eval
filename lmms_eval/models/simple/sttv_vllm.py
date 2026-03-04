@@ -57,6 +57,8 @@ class STTVVLLM(lmms):
         batch_size: Optional[Union[int, str]] = 1,
         depth: Union[bool, str, int, float] = False,
         prompt_path: Optional[str] = None,
+        verifier_prompt_path: Optional[str] = None,
+        self_verifier_prompt_path: Optional[str] = None,
         instruction_mode: str = "box",
         max_image_side: int = 768,
         verifier_max_attempts: int = 3,
@@ -140,8 +142,8 @@ class STTVVLLM(lmms):
         self.prompt_template = self._load_prompt_template(prompt_path, self.depth_enabled)
         self.instruction_text = self._load_instruction_text(self.instruction_mode)
         self.depth_instruction_text = self._load_depth_instruction_text(self.instruction_mode) if self.depth_enabled else None
-        self.verifier_template = self._load_verifier_template()
-        self.self_verifier_template = self._load_self_verifier_template()
+        self.verifier_template = self._load_verifier_template(verifier_prompt_path)
+        self.self_verifier_template = self._load_self_verifier_template(self_verifier_prompt_path)
         self.self_verifier_max_new_tokens = int(self.verifier_max_new_tokens)
 
     @property
@@ -235,8 +237,11 @@ class STTVVLLM(lmms):
             raise ValueError(f"Depth instruction file is empty: {instruction_file}")
         return instruction_text
 
-    def _load_verifier_template(self) -> str:
-        prompt_file = Path(__file__).resolve().parents[3] / "prompts" / "verifier_instructions.txt"
+    def _load_verifier_template(self, prompt_path: Optional[str]) -> str:
+        if prompt_path is None:
+            prompt_file = Path(__file__).resolve().parents[3] / "prompts" / "verifier_instructions.txt"
+        else:
+            prompt_file = Path(prompt_path)
         if not prompt_file.exists():
             raise FileNotFoundError(f"Verifier prompt file not found: {prompt_file}")
         prompt_text = prompt_file.read_text(encoding="utf-8").strip()
@@ -244,8 +249,11 @@ class STTVVLLM(lmms):
             raise ValueError(f"Verifier prompt file is empty: {prompt_file}")
         return prompt_text
 
-    def _load_self_verifier_template(self) -> str:
-        prompt_file = Path(__file__).resolve().parents[3] / "prompts" / "self_verifier_instructions.txt"
+    def _load_self_verifier_template(self, prompt_path: Optional[str]) -> str:
+        if prompt_path is None:
+            prompt_file = Path(__file__).resolve().parents[3] / "prompts" / "self_verifier_instructions.txt"
+        else:
+            prompt_file = Path(prompt_path)
         if not prompt_file.exists():
             raise FileNotFoundError(f"Self-verifier prompt file not found: {prompt_file}")
         prompt_text = prompt_file.read_text(encoding="utf-8").strip()
