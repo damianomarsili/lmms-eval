@@ -64,6 +64,9 @@ class STTVVLLM(lmms):
         verifier_max_attempts: int = 3,
         verifier_max_new_tokens: int = 96,
         verifier_image_side: int = 1024,
+        generation_max_new_tokens: int = 2048,
+        generation_chunk_max_new_tokens: int = 256,
+        generation_final_answer_max_new_tokens: int = 64,
         trust_remote_code: Optional[bool] = True,
         chat_template: Optional[str] = None,
         min_image_pixels: int = 28,
@@ -138,6 +141,9 @@ class STTVVLLM(lmms):
         self.verifier_max_attempts = int(verifier_max_attempts)
         self.verifier_max_new_tokens = int(verifier_max_new_tokens)
         self.verifier_image_side = int(verifier_image_side)
+        self.generation_max_new_tokens = max(64, int(generation_max_new_tokens))
+        self.generation_chunk_max_new_tokens = max(1, int(generation_chunk_max_new_tokens))
+        self.generation_final_answer_max_new_tokens = max(1, int(generation_final_answer_max_new_tokens))
 
         self.prompt_template = self._load_prompt_template(prompt_path, self.depth_enabled)
         self.instruction_text = self._load_instruction_text(self.instruction_mode)
@@ -638,8 +644,8 @@ class STTVVLLM(lmms):
         step_count = 0
         max_failed_loc_rounds = 3
         max_steps = 8
-        max_new_tokens_per_chunk = 256
-        max_final_answer_tokens = 64
+        max_new_tokens_per_chunk = self.generation_chunk_max_new_tokens
+        max_final_answer_tokens = self.generation_final_answer_max_new_tokens
         final_answer_prompt = "I can now predict the final answer which is: "
         final_fail_prompt = "I am unable to locate the objects correctly. Provide a final <reason> step and " "then the final <answer>."
         bbox_line_format = '1: label="object_name", [x_min, y_min, x_max, y_max]'
@@ -660,7 +666,7 @@ class STTVVLLM(lmms):
             "and put one object per line inside that single block."
         )
         total_generated_tokens = 0
-        max_total_tokens = max_steps * max_new_tokens_per_chunk
+        max_total_tokens = self.generation_max_new_tokens
         max_self_verify_attempts = self.verifier_max_attempts
         max_empty_generation_attempts = 3
         self_verify_failures = 0
@@ -677,13 +683,22 @@ class STTVVLLM(lmms):
 
         def _inject_final_answer(prompt_prefix: str, max_new_tokens: int = max_new_tokens_per_chunk) -> str:
             nonlocal total_generated_tokens
+            remaining = max_total_tokens - total_generated_tokens
+            if remaining <= 0:
+                return "".join(output_chunks)
+            capped_max_new_tokens = max(1, min(max_new_tokens, remaining))
             messages.append(
                 {
                     "role": "user",
                     "content": [{"type": "text", "text": prompt_prefix}],
                 }
             )
-            final_chunk, new_tokens = self._generate_once(messages, gen_kwargs, stop_sequences=["</answer>"], max_new_tokens=max_new_tokens)
+            final_chunk, new_tokens = self._generate_once(
+                messages,
+                gen_kwargs,
+                stop_sequences=["</answer>"],
+                max_new_tokens=capped_max_new_tokens,
+            )
             total_generated_tokens += new_tokens
             output_chunks.append(final_chunk)
             return "".join(output_chunks)
@@ -737,11 +752,15 @@ class STTVVLLM(lmms):
             return None
 
         while True:
+            if total_generated_tokens >= max_total_tokens:
+                return _inject_final_answer(final_answer_prompt, max_new_tokens=max_final_answer_tokens)
+            remaining_tokens = max_total_tokens - total_generated_tokens
+            next_chunk_max_tokens = max(1, min(max_new_tokens_per_chunk, remaining_tokens))
             chunk, new_tokens = self._generate_once(
                 messages,
                 gen_kwargs,
                 stop_sequences=["</bbox_2d>", "</answer>"],
-                max_new_tokens=max_new_tokens_per_chunk,
+                max_new_tokens=next_chunk_max_tokens,
             )
             if new_tokens == 0 and not chunk.strip():
                 empty_generation_failures += 1
