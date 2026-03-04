@@ -27,6 +27,8 @@ Requirements:
 - Explicitly call out over-predictions that should be removed and under-predictions that should be added.
 - For EDIT lines, use geometric edge terms with concrete values:
   "EDIT 2: move x_min from ~420 to ~460 and y_max from ~730 to ~700."
+- Prefer small coordinate edits (edge moves) with EDIT over large rewrites.
+- For an existing prediction that should remain, do not use REMOVE+ADD for the same box; use EDIT.
 - For ADD lines, provide an explicit label and coordinates:
   "ADD label=\"lamp\", [430, 120, 560, 740]"
 - Avoid vague statements like:
