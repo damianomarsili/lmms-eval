@@ -72,6 +72,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "sttv": "STTV",
     "sttv_no_verifier": "STTVNoVerifier",
     "sttv_no_verifier_vllm": "STTVNoVerifierVLLM",
+    "sttv_all_verifiers_vllm": "STTVAllVerifiersVLLM",
     "sttv_vllm": "STTVVLLM",
     "smolVLM": "SmolVLM",
     "tinyllava": "TinyLlava",
