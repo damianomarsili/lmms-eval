@@ -12,9 +12,6 @@ LOGIC_FEEDBACK_PATTERN = re.compile(r"(?ims)^\s*FEEDBACK\s*:\s*(.*?)\s*$")
 LOGIC_SPATIAL_PATTERN = re.compile(r"(?im)^\s*SPATIAL_CORRECTNESS\s*:\s*(correct|incorrect)\s*$")
 LOGIC_ATTRIBUTE_PATTERN = re.compile(r"(?im)^\s*ATTRIBUTE_CORRECTNESS\s*:\s*(correct|incorrect)\s*$")
 LOGIC_REASONING_PATTERN = re.compile(r"(?im)^\s*LOGIC_CORRECTNESS\s*:\s*(correct|incorrect)\s*$")
-LOGIC_SPATIAL_FIX_PATTERN = re.compile(r"(?i)\bspatial\s+fix\s*:")
-LOGIC_ATTRIBUTE_FIX_PATTERN = re.compile(r"(?i)\battribute\s+fix\s*:")
-LOGIC_REASONING_FIX_PATTERN = re.compile(r"(?i)\blogic\s+fix\s*:")
 
 
 @register_model("sttv_all_verifiers_vllm")
@@ -130,12 +127,6 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             if parsed_status not in {"KEEP", "REVISE"}:
                 return "INVALID", "", False
         if has_incorrect and not feedback:
-            return "INVALID", "", False
-        if spatial_match.group(1).strip().lower() == "incorrect" and LOGIC_SPATIAL_FIX_PATTERN.search(feedback) is None:
-            return "INVALID", "", False
-        if attribute_match.group(1).strip().lower() == "incorrect" and LOGIC_ATTRIBUTE_FIX_PATTERN.search(feedback) is None:
-            return "INVALID", "", False
-        if reasoning_match.group(1).strip().lower() == "incorrect" and LOGIC_REASONING_FIX_PATTERN.search(feedback) is None:
             return "INVALID", "", False
         if derived_status == "KEEP" and not feedback:
             feedback = "The current <reason>/<answer> is correct. Re-emit unchanged."
