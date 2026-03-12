@@ -24,6 +24,7 @@ Decision rules:
 - If ALL rubric items are correct, STATUS must be KEEP.
 - If ANY rubric item is incorrect, STATUS must be REVISE and FEEDBACK must explain how to fix every incorrect item.
 - FEEDBACK must be plain prose (no "Spatial fix:", "Attribute fix:", or "Logic fix:" labels).
+- Use KEEP only when the current reasoning and final answer are already correct with high confidence; otherwise use REVISE.
 
 Ground rules:
 - Treat the provided detected objects as CORRECT and fixed context in every rubric category. Do not output STATUS=REVISE because of detection/grounding issues; evaluate only the <reason> and <answer>.

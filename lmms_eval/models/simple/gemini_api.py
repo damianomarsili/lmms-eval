@@ -240,6 +240,13 @@ class GeminiAPI(lmms):
         vertex_location: Optional[str] = None,
         service_account_file: Optional[str] = None,
         http_api_version: Optional[str] = None,
+        self_consistency_k: int = 1,
+        self_consistency_temperature: float = 0.7,
+        self_consistency_top_p: float = 0.95,
+        self_consistency_selector: str = "majority_vote",
+        self_consistency_judge_max_new_tokens: int = 64,
+        self_consistency_judge_temperature: float = 0.0,
+        self_consistency_judge_top_p: float = 1.0,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -251,6 +258,20 @@ class GeminiAPI(lmms):
         self.response_persistent_file = ""
         self.interleave = interleave
         self.max_image_side = int(max_image_side)
+        self.self_consistency_k = max(1, int(self_consistency_k))
+        self.self_consistency_temperature = float(self_consistency_temperature)
+        self.self_consistency_top_p = float(self_consistency_top_p)
+        selector = str(self_consistency_selector or "majority_vote").strip().lower()
+        selector_aliases = {
+            "majority": "majority_vote",
+            "majority_vote": "majority_vote",
+            "llm_judge": "llm_judge",
+            "judge": "llm_judge",
+        }
+        self.self_consistency_selector = selector_aliases.get(selector, "majority_vote")
+        self.self_consistency_judge_max_new_tokens = max(8, int(self_consistency_judge_max_new_tokens))
+        self.self_consistency_judge_temperature = float(self_consistency_judge_temperature)
+        self.self_consistency_judge_top_p = float(self_consistency_judge_top_p)
 
         self.client = _create_genai_client(
             api_key=api_key,
@@ -402,6 +423,133 @@ class GeminiAPI(lmms):
             parts.append(_ensure_part_from_text(context))
         return parts
 
+    def _vote_key(self, text: str) -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return ""
+        answer_blocks = re.findall(r"(?is)<answer>\s*(.*?)\s*</answer>", cleaned)
+        if answer_blocks:
+            cleaned = answer_blocks[-1].strip()
+        return " ".join(cleaned.lower().split())
+
+    def _majority_vote_text(self, candidates: List[str]) -> str:
+        if len(candidates) == 0:
+            return ""
+        counts: dict[str, int] = {}
+        first_idx: dict[str, int] = {}
+        chosen_text: dict[str, str] = {}
+        for idx, candidate_text in enumerate(candidates):
+            key = self._vote_key(candidate_text)
+            counts[key] = counts.get(key, 0) + 1
+            if key not in first_idx:
+                first_idx[key] = idx
+                chosen_text[key] = candidate_text
+        best_key = max(counts.keys(), key=lambda k: (counts[k], -first_idx[k]))
+        return chosen_text[best_key]
+
+    def _build_llm_judge_prompt(self, query: str, candidates: List[str]) -> str:
+        lines = [
+            "You are an answer judge.",
+            "Given a query and candidate answers, pick the single best candidate.",
+            "Focus on correctness and adherence to the requested answer format.",
+            "",
+            "Query:",
+            str(query or "").strip(),
+            "",
+            "Candidates:",
+        ]
+        for idx, text in enumerate(candidates, start=1):
+            lines.extend([f"[{idx}]", str(text or "").strip(), ""])
+        lines.append(f"Return exactly one line in this format: BEST: <index 1-{len(candidates)}>")
+        return "\n".join(lines)
+
+    def _parse_llm_judge_choice(self, judge_text: str, num_candidates: int) -> Optional[int]:
+        if num_candidates <= 0:
+            return None
+        text = str(judge_text or "")
+        match = re.search(r"(?i)\bBEST\b\s*[:#-]?\s*(\d+)", text)
+        if match is None:
+            match = re.search(r"\b(\d+)\b", text)
+        if match is None:
+            return None
+        try:
+            one_based = int(match.group(1))
+        except (TypeError, ValueError):
+            return None
+        if one_based < 1 or one_based > num_candidates:
+            return None
+        return one_based - 1
+
+    def _run_judge_call(self, judge_prompt: str) -> str:
+        config_kwargs = {
+            "max_output_tokens": self.self_consistency_judge_max_new_tokens,
+            "temperature": self.self_consistency_judge_temperature,
+            "top_p": self.self_consistency_judge_top_p,
+        }
+        config_obj: Optional[Any] = None
+        cleaned_config = {k: v for k, v in config_kwargs.items() if v is not None}
+        if cleaned_config:
+            if genai_types is not None and hasattr(genai_types, "GenerateContentConfig"):
+                config_obj = genai_types.GenerateContentConfig(**cleaned_config)
+            elif genai_types is not None and hasattr(genai_types, "GenerationConfig"):
+                config_obj = genai_types.GenerationConfig(**cleaned_config)
+            else:
+                config_obj = cleaned_config
+
+        content = ""
+        for attempt in range(5):
+            try:
+                request_kwargs = {
+                    "model": self.model_version,
+                    "contents": [judge_prompt],
+                }
+                if config_obj is not None:
+                    request_kwargs["config"] = config_obj
+                response = self.client.models.generate_content(**request_kwargs)
+                response_text = getattr(response, "text", None)
+                if response_text is None and hasattr(response, "candidates"):
+                    text_chunks = []
+                    for candidate in getattr(response, "candidates", []):
+                        candidate_content = getattr(candidate, "content", None)
+                        candidate_parts = getattr(candidate_content, "parts", []) if candidate_content else []
+                        for part in candidate_parts:
+                            text_value = getattr(part, "text", None)
+                            if text_value:
+                                text_chunks.append(text_value)
+                    response_text = "".join(text_chunks)
+                content = response_text or ""
+                break
+            except TypeError as e:
+                message = str(e)
+                if "config" in message and config_obj is not None:
+                    eval_logger.warning("Judge call: `config` unsupported by current google-genai client; retrying without config.")
+                    config_obj = None
+                    continue
+                if attempt < 4:
+                    time.sleep(NUM_SECONDS_TO_SLEEP)
+                else:
+                    eval_logger.error(f"Judge call failed after retries. Last TypeError: {message}")
+                    content = ""
+            except Exception as e:
+                if attempt < 4:
+                    time.sleep(NUM_SECONDS_TO_SLEEP)
+                else:
+                    eval_logger.error(f"Judge call failed after retries. Last error: {str(e)}")
+                    content = ""
+        return content
+
+    def _llm_judge_select_text(self, query: str, candidates: List[str]) -> str:
+        if len(candidates) == 0:
+            return ""
+        if len(candidates) == 1:
+            return candidates[0]
+        judge_prompt = self._build_llm_judge_prompt(query, candidates)
+        judge_text = self._run_judge_call(judge_prompt)
+        selected_idx = self._parse_llm_judge_choice(judge_text, len(candidates))
+        if selected_idx is None:
+            return self._majority_vote_text(candidates)
+        return candidates[selected_idx]
+
     def generate_until(self, requests) -> List[str]:
         res = []
         pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
@@ -450,62 +598,96 @@ class GeminiAPI(lmms):
             if genai_types is not None and hasattr(genai_types, "Content"):
                 user_content = genai_types.Content(role="user", parts=user_parts)
 
-            content = ""
-            for attempt in range(5):
-                try:
-                    request_kwargs = {
-                        "model": self.model_version,
-                        "contents": [user_content] if user_content is not None else user_parts,
-                    }
-                    if config_obj is not None:
-                        request_kwargs["config"] = config_obj
-                    if self.safety_settings is not None:
-                        request_kwargs["safety_settings"] = self.safety_settings
+            sample_count = self.self_consistency_k
+            sample_candidates: list[str] = []
+            for sample_idx in range(sample_count):
+                sample_config_obj = config_obj
+                if sample_count > 1:
+                    sampled_kwargs = dict(cleaned_config)
+                    temp_value = sampled_kwargs.get("temperature", None)
+                    try:
+                        temp_numeric = float(temp_value) if temp_value is not None else 0.0
+                    except (TypeError, ValueError):
+                        temp_numeric = 0.0
+                    if temp_numeric <= 0.0:
+                        sampled_kwargs["temperature"] = self.self_consistency_temperature
+                    if sampled_kwargs.get("top_p") is None:
+                        sampled_kwargs["top_p"] = self.self_consistency_top_p
+                    if genai_types is not None and hasattr(genai_types, "GenerateContentConfig"):
+                        sample_config_obj = genai_types.GenerateContentConfig(**sampled_kwargs)
+                    elif genai_types is not None and hasattr(genai_types, "GenerationConfig"):
+                        sample_config_obj = genai_types.GenerationConfig(**sampled_kwargs)
+                    else:
+                        sample_config_obj = sampled_kwargs
 
-                    response = self.client.models.generate_content(**request_kwargs)
-                    content_text = getattr(response, "text", None)
-                    if content_text is None and hasattr(response, "candidates"):
-                        text_chunks = []
-                        for candidate in getattr(response, "candidates", []):
-                            candidate_content = getattr(candidate, "content", None)
-                            candidate_parts = getattr(candidate_content, "parts", []) if candidate_content else []
-                            for part in candidate_parts:
-                                text_value = getattr(part, "text", None)
-                                if text_value:
-                                    text_chunks.append(text_value)
-                        content_text = "".join(text_chunks)
-                    content = content_text or ""
-                    break
-                except TypeError as e:
-                    message = str(e)
-                    if "config" in message and config_obj is not None:
-                        eval_logger.warning("`config` parameter not supported by current google-genai client; retrying without config.")
-                        config_obj = None
-                        continue
-                    if "safety_settings" in message and self.safety_settings is not None:
-                        eval_logger.warning("`safety_settings` parameter not supported by current google-genai client; retrying without safety settings.")
-                        self.safety_settings = None
-                        continue
-                    eval_logger.info(f"Attempt {attempt + 1} failed with TypeError: {message}")
-                    if attempt < 5 - 1:
-                        time.sleep(NUM_SECONDS_TO_SLEEP)
-                        continue
-                    eval_logger.error(f"All 5 attempts failed. Last error message: {message}")
-                    content = ""
-                except Exception as e:
-                    eval_logger.info(f"Attempt {attempt + 1} failed with error: {str(e)}")
-                    if isinstance(e, ValueError):
-                        try:
-                            eval_logger.info(f"Prompt feed_back: {content.prompt_feedback}")
-                            content = ""
-                            break
-                        except Exception:
-                            pass
-                    if attempt < 5 - 1:  # If we have retries left, sleep and then continue to next attempt
-                        time.sleep(NUM_SECONDS_TO_SLEEP)
-                    else:  # If this was the last attempt, log and return empty
-                        eval_logger.error(f"All 5 attempts failed. Last error message: {str(e)}")
+                content = ""
+                for attempt in range(5):
+                    try:
+                        request_kwargs = {
+                            "model": self.model_version,
+                            "contents": [user_content] if user_content is not None else user_parts,
+                        }
+                        if sample_config_obj is not None:
+                            request_kwargs["config"] = sample_config_obj
+                        if self.safety_settings is not None:
+                            request_kwargs["safety_settings"] = self.safety_settings
+
+                        response = self.client.models.generate_content(**request_kwargs)
+                        content_text = getattr(response, "text", None)
+                        if content_text is None and hasattr(response, "candidates"):
+                            text_chunks = []
+                            for candidate in getattr(response, "candidates", []):
+                                candidate_content = getattr(candidate, "content", None)
+                                candidate_parts = getattr(candidate_content, "parts", []) if candidate_content else []
+                                for part in candidate_parts:
+                                    text_value = getattr(part, "text", None)
+                                    if text_value:
+                                        text_chunks.append(text_value)
+                            content_text = "".join(text_chunks)
+                        content = content_text or ""
+                        break
+                    except TypeError as e:
+                        message = str(e)
+                        if "config" in message and sample_config_obj is not None:
+                            eval_logger.warning("`config` parameter not supported by current google-genai client; retrying without config.")
+                            sample_config_obj = None
+                            continue
+                        if "safety_settings" in message and self.safety_settings is not None:
+                            eval_logger.warning("`safety_settings` parameter not supported by current google-genai client; retrying without safety settings.")
+                            self.safety_settings = None
+                            continue
+                        eval_logger.info(
+                            f"Sample {sample_idx + 1}/{sample_count} attempt {attempt + 1} failed with TypeError: {message}"
+                        )
+                        if attempt < 5 - 1:
+                            time.sleep(NUM_SECONDS_TO_SLEEP)
+                            continue
+                        eval_logger.error(f"All 5 attempts failed. Last error message: {message}")
                         content = ""
+                    except Exception as e:
+                        eval_logger.info(
+                            f"Sample {sample_idx + 1}/{sample_count} attempt {attempt + 1} failed with error: {str(e)}"
+                        )
+                        if isinstance(e, ValueError):
+                            try:
+                                eval_logger.info(f"Prompt feed_back: {content.prompt_feedback}")
+                                content = ""
+                                break
+                            except Exception:
+                                pass
+                        if attempt < 5 - 1:  # If we have retries left, sleep and then continue to next attempt
+                            time.sleep(NUM_SECONDS_TO_SLEEP)
+                        else:  # If this was the last attempt, log and return empty
+                            eval_logger.error(f"All 5 attempts failed. Last error message: {str(e)}")
+                            content = ""
+                sample_candidates.append(content)
+
+            if len(sample_candidates) <= 1:
+                content = sample_candidates[0] if sample_candidates else ""
+            elif self.self_consistency_selector == "llm_judge":
+                content = self._llm_judge_select_text(contexts, sample_candidates)
+            else:
+                content = self._majority_vote_text(sample_candidates)
             res.append(content)
             pbar.update(1)
 

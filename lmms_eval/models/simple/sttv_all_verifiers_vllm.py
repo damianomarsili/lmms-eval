@@ -157,6 +157,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         gen_kwargs: Dict[str, object],
         visuals: List[Image.Image],
         query: str,
+        grounding_only: bool = False,
     ) -> str:
         output_chunks: List[str] = []
         max_new_tokens_per_chunk = self.generation_chunk_max_new_tokens
@@ -251,6 +252,8 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             current_entries = corrected_entries
 
         latest_bbox_block = self._format_bbox_block(current_entries)
+        if grounding_only:
+            return "".join(output_chunks)
 
         answer_prompt = self._build_clean_answer_prompt(query, latest_bbox_block)
         answer_messages = self._build_messages(answer_prompt, visuals)

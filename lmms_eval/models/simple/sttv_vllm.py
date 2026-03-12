@@ -677,12 +677,17 @@ class STTVVLLM(lmms):
             "Do not output another <bbox_2d>."
         )
 
+    def _is_grounding_only_task(self, task_name: str) -> bool:
+        normalized = str(task_name or "").strip().lower()
+        return normalized.startswith("convseg") or normalized.startswith("refcoco_m")
+
     def _generate_with_verifier(
         self,
         messages: List[Dict[str, object]],
         gen_kwargs: Dict[str, object],
         visuals: List[Image.Image],
         query: str,
+        grounding_only: bool = False,
     ) -> str:
         output_chunks: List[str] = []
         max_new_tokens_per_chunk = self.generation_chunk_max_new_tokens
@@ -777,6 +782,8 @@ class STTVVLLM(lmms):
             current_entries = corrected_entries
 
         latest_bbox_block = self._format_bbox_block(current_entries)
+        if grounding_only:
+            return "".join(output_chunks)
         answer_prompt = self._build_clean_answer_prompt(query, latest_bbox_block)
         answer_messages = self._build_messages(answer_prompt, visuals)
         answer_chunk, _ = self._generate_once(
@@ -802,6 +809,7 @@ class STTVVLLM(lmms):
             contexts, all_gen_kwargs, doc_to_visual, doc_id, task, split = zip(*chunk)
             task = task[0]
             split = split[0]
+            grounding_only = self._is_grounding_only_task(task)
             visual_list = [doc_to_visual[0](self.task_dict[task][split][ids]) for ids in doc_id]
             gen_kwargs = all_gen_kwargs[0]
 
@@ -818,7 +826,13 @@ class STTVVLLM(lmms):
 
                 visuals = visual_list[i] if isinstance(visual_list[i], list) else [visual_list[i]]
                 visuals = [item for item in visuals if isinstance(item, Image.Image)]
-                answer = self._generate_with_verifier(messages, dict(gen_kwargs), visuals, query_text)
+                answer = self._generate_with_verifier(
+                    messages,
+                    dict(gen_kwargs),
+                    visuals,
+                    query_text,
+                    grounding_only=grounding_only,
+                )
                 res.append(answer)
                 self.cache_hook.add_partial("generate_until", (context, gen_kwargs), answer)
                 pbar.update(1)
