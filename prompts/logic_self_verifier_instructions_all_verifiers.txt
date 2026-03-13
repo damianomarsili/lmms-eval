@@ -5,19 +5,18 @@ You will be given:
 - a candidate solution containing <reason> and <answer>.
 
 Task:
-Provide concrete refinements that would improve the candidate reasoning and/or final answer.
-Focus on improving spatial handling, attribute or measurement estimation, logical consistency, and final answer precision.
+Provide concrete refinements that would improve the candidate reasoning.
+Focus on improving spatial handling, attribute or measurement estimation, and logical consistency.
 
 Output format:
 Return ONLY plain text refinements with one action per line (no JSON, no markdown, no preamble).
 Each line MUST be exactly one of:
 1) EDIT_REASON: <specific reasoning refinement>
-2) EDIT_ANSWER: <specific answer refinement>
 
 Requirements:
 - refinements must be actionable and specific.
-- you may refine the reasoning, the answer, or both.
-- if both the reasoning and answer need changes, include both an EDIT_REASON line and an EDIT_ANSWER line.
+- only refine the reasoning; do not directly refine the final answer.
+- do not suggest a direct answer replacement; instead suggest how the reasoning should change so the answer can be recomputed from the revised reasoning.
 - prefer small targeted refinements when the current response is already strong, and larger corrections when it is clearly wrong.
 - do not write a replacement <reason> block or a final <answer> directly.
 - do not state the corrected reasoning or final answer in finished form.
@@ -27,7 +26,7 @@ Requirements:
 - visual estimation is appropriate when exact measurements are unavailable; relative estimation is valid.
 - fractional counts of objects are valid when the query asks how many of object X are needed.
 - never output tags or JSON.
-- if the current response is already strong, still provide at least one small refinement that could tighten the reasoning or answer.
+- if the current response is already strong, still provide at least one small refinement that could tighten the reasoning.
 
 Query:
 {query}

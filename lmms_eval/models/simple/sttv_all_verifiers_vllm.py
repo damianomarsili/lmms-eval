@@ -8,7 +8,6 @@ from lmms_eval.api.registry import register_model
 from lmms_eval.models.simple.sttv_vllm import LocEntry, STTVVLLM
 
 LOGIC_REASON_EDIT_PATTERN = re.compile(r"(?i)^EDIT_REASON\s*:\s*(?P<body>.+)$")
-LOGIC_ANSWER_EDIT_PATTERN = re.compile(r"(?i)^EDIT_ANSWER\s*:\s*(?P<body>.+)$")
 
 
 @register_model("sttv_all_verifiers_vllm")
@@ -126,17 +125,6 @@ class STTVAllVerifiersVLLM(STTVVLLM):
                         line_order += 1
                 continue
 
-            answer_match = LOGIC_ANSWER_EDIT_PATTERN.match(line)
-            if answer_match is not None:
-                body = answer_match.group("body").strip()
-                if body:
-                    normalized = f"EDIT_ANSWER: {body}"
-                    if normalized not in seen:
-                        normalized_lines.append((normalized, line_order))
-                        seen.add(normalized)
-                        line_order += 1
-                continue
-
         normalized_lines.sort(key=lambda item: item[1])
         if not normalized_lines:
             return "No valid self-verifier feedback was produced. Re-emit the current answer unchanged.", False
@@ -154,9 +142,11 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             f"{clean_prompt}\n\n"
             f"Current answer draft:\n{str(current_answer_output or '').strip()}\n\n"
             "I have some feedback for you to incorporate. "
-            "Please output exactly one full <reason> block and then one full <answer> block that incorporates the feedback.\n"
+            "Please update ONLY the <reason> using the feedback, then output a final <answer> that follows from the updated reasoning.\n"
             f"Feedback:\n{logic_feedback}\n"
-            "You MUST re-predict BOTH the reasoning and the answer, including unchanged parts. "
+            "You MUST update the reasoning to incorporate the feedback. "
+            "You MUST then produce the final answer from that updated reasoning. "
+            "You MUST NOT treat the feedback as a direct replacement answer. "
             "You MUST incorporate the feedback and MUST NOT make unrelated changes. "
             "Please output exactly one full <reason> block and then one full <answer> block. "
             "Ensure that the answer is either yes/no, one word, or one number. "
