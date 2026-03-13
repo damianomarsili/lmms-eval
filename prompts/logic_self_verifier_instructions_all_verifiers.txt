@@ -19,6 +19,9 @@ Requirements:
 - you may refine the reasoning, the answer, or both.
 - if both the reasoning and answer need changes, include both an EDIT_REASON line and an EDIT_ANSWER line.
 - prefer small targeted refinements when the current response is already strong, and larger corrections when it is clearly wrong.
+- do not write a replacement <reason> block or a final <answer> directly.
+- do not state the corrected reasoning or final answer in finished form.
+- instead, softly suggest what should change, for example by pointing out what to reconsider, recompute, tighten, or correct.
 - assume the detected objects are CORRECT and fixed context; do not verify, critique, or change detections.
 - do not say the answer is impossible to determine. Answers like "cannot determine", "unknown", "can't answer", or "impossible to answer" are always incorrect. When these appear, instruct the model to produce a concrete estimate.
 - visual estimation is appropriate when exact measurements are unavailable; relative estimation is valid.
