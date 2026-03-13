@@ -665,6 +665,60 @@ class STTVVLLM(lmms):
             )
         return "<bbox_2d>\n" + "\n".join(lines) + "\n</bbox_2d>"
 
+    def _serialize_loc_entries(self, entries: List[LocEntry]) -> List[Dict[str, object]]:
+        serialized: List[Dict[str, object]] = []
+        for entry in entries:
+            serialized.append(
+                {
+                    "image_index": int(entry.image_index),
+                    "label": str(entry.label),
+                    "coords": [float(value) for value in entry.coords],
+                }
+            )
+        return serialized
+
+    def _build_grounding_round_record(
+        self,
+        *,
+        stage: str,
+        round_index: int,
+        raw_output: str,
+        candidate_entries: List[LocEntry],
+        accepted_entries: Optional[List[LocEntry]] = None,
+        accepted: Optional[bool] = None,
+        verifier_prompt: Optional[str] = None,
+        verifier_output: Optional[str] = None,
+        parsed_corrections: Optional[str] = None,
+        raw_verifier_feedback: Optional[str] = None,
+        feedback_info: Optional[Dict[str, object]] = None,
+    ) -> Dict[str, object]:
+        if accepted_entries is None:
+            accepted_entries = candidate_entries
+
+        record: Dict[str, object] = {
+            "stage": str(stage),
+            "round_index": int(round_index),
+            "raw_output": str(raw_output or ""),
+            "bbox_payloads": self._extract_bbox_2d_payloads(str(raw_output or "")),
+            "candidate_entries": self._serialize_loc_entries(candidate_entries),
+            "accepted_entries": self._serialize_loc_entries(accepted_entries),
+            "candidate_bbox_block": self._format_bbox_block(candidate_entries) if candidate_entries else None,
+            "accepted_bbox_block": self._format_bbox_block(accepted_entries) if accepted_entries else None,
+        }
+        if accepted is not None:
+            record["accepted"] = bool(accepted)
+        if verifier_prompt is not None:
+            record["verifier_prompt"] = str(verifier_prompt)
+        if verifier_output is not None:
+            record["verifier_output"] = str(verifier_output)
+        if parsed_corrections is not None:
+            record["parsed_corrections"] = str(parsed_corrections)
+        if raw_verifier_feedback is not None:
+            record["raw_verifier_feedback"] = str(raw_verifier_feedback)
+        if feedback_info is not None:
+            record["feedback_info"] = dict(feedback_info)
+        return record
+
     def _build_clean_answer_prompt(self, query: str, latest_bbox_block: str) -> str:
         query_text = query.strip()
         return (
@@ -679,7 +733,9 @@ class STTVVLLM(lmms):
 
     def _is_grounding_only_task(self, task_name: str) -> bool:
         normalized = str(task_name or "").strip().lower()
-        return normalized.startswith("convseg") or normalized.startswith("refcoco_m")
+        return normalized.startswith("convseg") or normalized.startswith("refcoco_m") or (
+            normalized.startswith("refcoco") and "_bbox" in normalized
+        )
 
     def _generate_with_verifier(
         self,
@@ -688,14 +744,21 @@ class STTVVLLM(lmms):
         visuals: List[Image.Image],
         query: str,
         grounding_only: bool = False,
-    ) -> str:
+    ) -> Tuple[str, Dict[str, object]]:
         output_chunks: List[str] = []
+        generation_metadata: Dict[str, object] = {
+            "grounding_only": bool(grounding_only),
+            "requested_grounding_verifier_rounds": int(self.loc_verifier_rounds),
+            "performed_grounding_verifier_rounds": 0,
+            "grounding_rounds": [],
+        }
         max_new_tokens_per_chunk = self.generation_chunk_max_new_tokens
         bbox_line_format = '1: label="object_name", [x_min, y_min, x_max, y_max]'
         total_generated_tokens = 0
         max_total_tokens = self.generation_max_new_tokens
         if max_total_tokens <= 0:
-            return ""
+            generation_metadata["grounding_stop_reason"] = "generation_budget_exhausted_before_start"
+            return "", generation_metadata
 
         remaining = max_total_tokens - total_generated_tokens
         chunk, new_tokens = self._generate_once(
@@ -706,22 +769,39 @@ class STTVVLLM(lmms):
         )
         total_generated_tokens += new_tokens
         if not chunk.strip():
-            return ""
+            generation_metadata["grounding_stop_reason"] = "empty_initial_grounding_output"
+            return "", generation_metadata
         output_chunks.append(chunk)
         messages.append({"role": "assistant", "content": [{"type": "text", "text": chunk}]})
 
         loc_payloads = self._extract_bbox_2d_payloads(chunk)
         if len(loc_payloads) != 1:
-            return "".join(output_chunks)
+            generation_metadata["grounding_stop_reason"] = "initial_grounding_output_missing_single_bbox_block"
+            return "".join(output_chunks), generation_metadata
         loc_payload = loc_payloads[0]
         if self._has_missing_label(loc_payload):
-            return "".join(output_chunks)
+            generation_metadata["grounding_stop_reason"] = "initial_grounding_output_missing_label"
+            return "".join(output_chunks), generation_metadata
         entries = self._parse_bbox_2d_entries(loc_payload)
         if not entries or self._has_invalid_box(entries):
-            return "".join(output_chunks)
+            generation_metadata["grounding_stop_reason"] = "initial_grounding_output_invalid_boxes"
+            return "".join(output_chunks), generation_metadata
 
         current_entries = entries
-        for _ in range(self.loc_verifier_rounds):
+        grounding_rounds = generation_metadata["grounding_rounds"]
+        assert isinstance(grounding_rounds, list)
+        grounding_rounds.append(
+            self._build_grounding_round_record(
+                stage="initial_prediction",
+                round_index=0,
+                raw_output=chunk,
+                candidate_entries=current_entries,
+                accepted_entries=current_entries,
+                accepted=True,
+            )
+        )
+
+        for round_index in range(1, self.loc_verifier_rounds + 1):
             entries_by_image: Dict[int, List[LocEntry]] = {}
             for entry in current_entries:
                 entries_by_image.setdefault(entry.image_index, []).append(entry)
@@ -737,7 +817,7 @@ class STTVVLLM(lmms):
 
             verifier_prompt = self._build_verifier_prompt(current_entries, len(visuals))
             verifier_output = self._run_verifier(original_images, overlay_images, verifier_prompt)
-            corrections, _, _ = self._parse_verifier_feedback(verifier_output, current_entries)
+            corrections, raw_verifier_feedback, feedback_info = self._parse_verifier_feedback(verifier_output, current_entries)
 
             messages.append(
                 {
@@ -759,7 +839,8 @@ class STTVVLLM(lmms):
             )
             remaining = max_total_tokens - total_generated_tokens
             if remaining <= 0:
-                return "".join(output_chunks)
+                generation_metadata["grounding_stop_reason"] = "generation_budget_exhausted_during_grounding_verification"
+                return "".join(output_chunks), generation_metadata
             correction_chunk, correction_tokens = self._generate_once(
                 messages,
                 gen_kwargs,
@@ -770,20 +851,43 @@ class STTVVLLM(lmms):
             output_chunks.append(correction_chunk)
             messages.append({"role": "assistant", "content": [{"type": "text", "text": correction_chunk}]})
 
+            corrected_entries: List[LocEntry] = []
+            accepted = False
             corrected_payloads = self._extract_bbox_2d_payloads(correction_chunk)
             if len(corrected_payloads) != 1:
-                continue
-            corrected_payload = corrected_payloads[0]
-            if self._has_missing_label(corrected_payload):
-                continue
-            corrected_entries = self._parse_bbox_2d_entries(corrected_payload)
-            if not corrected_entries or self._has_invalid_box(corrected_entries):
-                continue
-            current_entries = corrected_entries
+                accepted_entries = current_entries
+            else:
+                corrected_payload = corrected_payloads[0]
+                if not self._has_missing_label(corrected_payload):
+                    corrected_entries = self._parse_bbox_2d_entries(corrected_payload)
+                    if corrected_entries and not self._has_invalid_box(corrected_entries):
+                        accepted = True
+                        current_entries = corrected_entries
+                accepted_entries = current_entries
+
+            grounding_rounds.append(
+                self._build_grounding_round_record(
+                    stage="loc_verifier_round",
+                    round_index=round_index,
+                    raw_output=correction_chunk,
+                    candidate_entries=corrected_entries,
+                    accepted_entries=accepted_entries,
+                    accepted=accepted,
+                    verifier_prompt=verifier_prompt,
+                    verifier_output=verifier_output,
+                    parsed_corrections=corrections,
+                    raw_verifier_feedback=raw_verifier_feedback,
+                    feedback_info=feedback_info,
+                )
+            )
+            generation_metadata["performed_grounding_verifier_rounds"] = round_index
 
         latest_bbox_block = self._format_bbox_block(current_entries)
+        generation_metadata["final_bbox_block"] = latest_bbox_block
+        generation_metadata["final_bbox_entries"] = self._serialize_loc_entries(current_entries)
         if grounding_only:
-            return "".join(output_chunks)
+            generation_metadata["grounding_stop_reason"] = "grounding_only_task"
+            return "".join(output_chunks), generation_metadata
         answer_prompt = self._build_clean_answer_prompt(query, latest_bbox_block)
         answer_messages = self._build_messages(answer_prompt, visuals)
         answer_chunk, _ = self._generate_once(
@@ -793,7 +897,8 @@ class STTVVLLM(lmms):
             max_new_tokens=max_new_tokens_per_chunk,
         )
         output_chunks.append(answer_chunk)
-        return "".join(output_chunks)
+        generation_metadata["grounding_stop_reason"] = "continued_to_answer_generation"
+        return "".join(output_chunks), generation_metadata
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
@@ -805,6 +910,7 @@ class STTVVLLM(lmms):
         re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
         chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
         self.last_generation_metadata = None
+        all_generation_metadata: List[Dict[str, object]] = []
         for chunk in chunks:
             contexts, all_gen_kwargs, doc_to_visual, doc_id, task, split = zip(*chunk)
             task = task[0]
@@ -826,7 +932,7 @@ class STTVVLLM(lmms):
 
                 visuals = visual_list[i] if isinstance(visual_list[i], list) else [visual_list[i]]
                 visuals = [item for item in visuals if isinstance(item, Image.Image)]
-                answer = self._generate_with_verifier(
+                answer, metadata = self._generate_with_verifier(
                     messages,
                     dict(gen_kwargs),
                     visuals,
@@ -834,11 +940,13 @@ class STTVVLLM(lmms):
                     grounding_only=grounding_only,
                 )
                 res.append(answer)
+                all_generation_metadata.append(metadata)
                 self.cache_hook.add_partial("generate_until", (context, gen_kwargs), answer)
                 pbar.update(1)
                 self._cleanup_after_sample()
 
         res = re_ords.get_original(res)
+        self.last_generation_metadata = re_ords.get_original(all_generation_metadata)
         pbar.close()
         return res
 
