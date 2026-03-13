@@ -4,34 +4,27 @@ You will be given:
 - the original query,
 - a candidate solution containing <reason> and <answer>.
 
-Evaluate the candidate using this rubric:
-1) Spatial correctness:
-   check referenced spatial relationships (above, below, left/right, in front/behind, closer/farther, overlap/containment) are handled correctly. Assume detected bounding boxes are correct; do not verify or critique detections.
-2) Attribute correctness:
-   check object attributes and measurements used in reasoning (height/width/depth/size/count/ratio) are estimated reasonably, grounded in the image, and aligned with what the query asks. Assume detected bounding boxes are correct; do not verify or critique detections.
-3) Logic correctness:
-   check overall logical consistency, reasoning-to-answer consistency, major logical errors, and output-format requirements (for numeric estimates/ratios, avoid unnecessary rounding). Assume detected bounding boxes are correct; do not verify or critique detections.
+Task:
+Provide concrete refinements that would improve the candidate reasoning and/or final answer.
+Focus on improving spatial handling, attribute or measurement estimation, logical consistency, and final answer precision.
 
-Output exactly five lines in this strict format:
-SPATIAL_CORRECTNESS: correct|incorrect
-ATTRIBUTE_CORRECTNESS: correct|incorrect
-LOGIC_CORRECTNESS: correct|incorrect
-STATUS: KEEP|REVISE
-FEEDBACK: <one concise response>
+Output format:
+Return ONLY plain text refinements with one action per line (no JSON, no markdown, no preamble).
+Each line MUST be exactly one of:
+1) EDIT_REASON: <specific reasoning refinement>
+2) EDIT_ANSWER: <specific answer refinement>
 
-Decision rules:
-- If a rubric item is not applicable, mark it as correct.
-- If ALL rubric items are correct, STATUS must be KEEP.
-- If ANY rubric item is incorrect, STATUS must be REVISE and FEEDBACK must explain how to fix every incorrect item.
-- FEEDBACK must be plain prose (no "Spatial fix:", "Attribute fix:", or "Logic fix:" labels).
-- Use KEEP only when the current reasoning and final answer are already correct with high confidence; otherwise use REVISE.
-
-Ground rules:
-- Treat the provided detected objects as CORRECT and fixed context in every rubric category. Do not output STATUS=REVISE because of detection/grounding issues; evaluate only the <reason> and <answer>.
-- Answers like "cannot determine", "unknown", "can't answer", or "impossible to answer" are always INCORRECT. When these appear, FEEDBACK must advise how to produce a concrete estimate.
-- Visual estimation is appropriate and correct when exact measurements are unavailable; relative estimation is valid.
-- Fractional counts of objects are valid when the query asks how many of object X are needed (for example 5.3 can be correct).
-- Never output any tags or JSON.
+Requirements:
+- refinements must be actionable and specific.
+- you may refine the reasoning, the answer, or both.
+- if both the reasoning and answer need changes, include both an EDIT_REASON line and an EDIT_ANSWER line.
+- prefer small targeted refinements when the current response is already strong, and larger corrections when it is clearly wrong.
+- assume the detected objects are CORRECT and fixed context; do not verify, critique, or change detections.
+- do not say the answer is impossible to determine. Answers like "cannot determine", "unknown", "can't answer", or "impossible to answer" are always incorrect. When these appear, instruct the model to produce a concrete estimate.
+- visual estimation is appropriate when exact measurements are unavailable; relative estimation is valid.
+- fractional counts of objects are valid when the query asks how many of object X are needed.
+- never output tags or JSON.
+- if the current response is already strong, still provide at least one small refinement that could tighten the reasoning or answer.
 
 Query:
 {query}
