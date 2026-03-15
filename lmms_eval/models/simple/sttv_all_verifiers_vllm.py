@@ -7,7 +7,9 @@ from PIL import Image
 from lmms_eval.api.registry import register_model
 from lmms_eval.models.simple.sttv_vllm import LocEntry, STTVVLLM
 
-LOGIC_REASON_EDIT_PATTERN = re.compile(r"(?i)^EDIT_REASON\s*:\s*(?P<body>.+)$")
+LOGIC_STEP_EDIT_PATTERN = re.compile(r"(?i)^EDIT_STEP\s+(?P<idx>\d+)\s*:\s*(?P<body>.+)$")
+REASON_BLOCK_PATTERN = re.compile(r"(?is)<reason>\s*(?P<body>.*?)\s*</reason>")
+REASON_STEP_LINE_PATTERN = re.compile(r"^\s*(?P<idx>\d+)\.\s*(?P<body>.+?)\s*$")
 
 
 @register_model("sttv_all_verifiers_vllm")
@@ -68,7 +70,8 @@ class STTVAllVerifiersVLLM(STTVVLLM):
 
     def _load_logic_self_verifier_template(self, prompt_path: Optional[str]) -> str:
         if prompt_path is None:
-            prompt_file = Path(__file__).resolve().parents[3] / "prompts" / "logic_self_verifier_instructions_all_verifiers.txt"
+            repo_root = Path(__file__).resolve().parents[4]
+            prompt_file = repo_root / "training" / "prompts" / "logic_self_verifier_gemini_instructions.txt"
         else:
             prompt_file = Path(prompt_path)
         if not prompt_file.exists():
@@ -85,27 +88,59 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             "Detected objects (in [x_min, y_min, x_max, y_max] format with coordinates in [0,1000]):\n"
             f"{latest_bbox_block}\n\n"
             f"Here is the query again:\n{query_text}\n\n"
-            "Please now answer the query by first reasoning inside <reason> tags and then putting ONLY your final "
-            "answer inside <answer>. Do not round answers, express all ratios as unrounded decimals. "
+            "Please now answer the query by first reasoning inside <reason> tags using numbered steps "
+            "(1., 2., 3., ... one step per line) and then putting ONLY your final answer inside <answer>. "
+            "Do not round answers, express all ratios as unrounded decimals. "
             "Do not output another <bbox_2d>."
         )
 
-    def _build_logic_self_verifier_prompt(self, query: str, latest_answer_output: str) -> str:
+    def _build_logic_self_verifier_prompt(
+        self, query: str, latest_bbox_block: str, latest_answer_output: str
+    ) -> str:
         return self.logic_self_verifier_template.format(
             query=query.strip(),
+            detected_objects=str(latest_bbox_block or "").strip(),
             answer=str(latest_answer_output or "").strip(),
         )
 
-    def _parse_logic_self_verifier_output(self, text: str) -> Tuple[str, bool]:
+    def _extract_reason_step_indices(self, answer_output: str) -> List[int]:
+        cleaned = str(answer_output or "").replace("<|im_end|>", "").strip()
+        match = REASON_BLOCK_PATTERN.search(cleaned)
+        if match is None:
+            return []
+        step_indices: List[int] = []
+        for raw_line in match.group("body").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            step_match = REASON_STEP_LINE_PATTERN.fullmatch(line)
+            if step_match is None:
+                continue
+            try:
+                step_idx = int(step_match.group("idx"))
+            except (TypeError, ValueError):
+                continue
+            if step_idx not in step_indices:
+                step_indices.append(step_idx)
+        return step_indices
+
+    def _parse_logic_self_verifier_output(
+        self, text: str, current_answer_output: str
+    ) -> Tuple[str, bool]:
         cleaned = str(text or "").replace("<|im_end|>", "").strip()
         normalized_lines: List[Tuple[str, int]] = []
         line_order = 0
         seen: set[str] = set()
+        saw_nonempty_line = False
+        valid_step_indices = set(self._extract_reason_step_indices(current_answer_output))
 
         for raw_line in cleaned.splitlines():
+            if len(normalized_lines) >= 2:
+                break
             line = raw_line.strip()
             if not line:
                 continue
+            saw_nonempty_line = True
             line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
             if not line:
                 continue
@@ -114,11 +149,17 @@ class STTVAllVerifiersVLLM(STTVVLLM):
                 if not line:
                     continue
 
-            reason_match = LOGIC_REASON_EDIT_PATTERN.match(line)
+            reason_match = LOGIC_STEP_EDIT_PATTERN.match(line)
             if reason_match is not None:
+                try:
+                    step_idx = int(reason_match.group("idx"))
+                except (TypeError, ValueError):
+                    continue
+                if valid_step_indices and step_idx not in valid_step_indices:
+                    continue
                 body = reason_match.group("body").strip()
                 if body:
-                    normalized = f"EDIT_REASON: {body}"
+                    normalized = f"EDIT_STEP {step_idx}: {body}"
                     if normalized not in seen:
                         normalized_lines.append((normalized, line_order))
                         seen.add(normalized)
@@ -126,8 +167,9 @@ class STTVAllVerifiersVLLM(STTVVLLM):
                 continue
 
         normalized_lines.sort(key=lambda item: item[1])
+        parse_valid = bool(normalized_lines or not saw_nonempty_line)
         if not normalized_lines:
-            return "No valid self-verifier feedback was produced. Re-emit the current answer unchanged.", False
+            return "", parse_valid
         return "\n".join(line for line, _ in normalized_lines), True
 
     def _build_answer_rewrite_prompt(
@@ -142,9 +184,11 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             f"{clean_prompt}\n\n"
             f"Current answer draft:\n{str(current_answer_output or '').strip()}\n\n"
             "I have some feedback for you to incorporate. "
-            "Please update the <reason> using the feedback, then output a final <answer> that follows from the updated reasoning.\n"
+            "Please update the <reason> using the feedback, revising the referenced numbered reasoning steps only, "
+            "then output a final <answer> that follows from the updated reasoning.\n"
             f"Feedback:\n{logic_feedback}\n"
             "You MUST update the reasoning to incorporate the feedback. "
+            "You MUST keep the <reason> step-indexed with numbered lines (1., 2., 3., ... one step per line). "
             "You MUST then produce the final answer from that updated reasoning. "
             "You MUST incorporate the feedback and MUST NOT make unrelated changes. "
             "Please output exactly one full <reason> block and then one full <answer> block. "
@@ -315,15 +359,17 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         )
 
         for _ in range(self.logic_verifier_rounds):
-            logic_prompt = self._build_logic_self_verifier_prompt(query, current_answer_output)
+            logic_prompt = self._build_logic_self_verifier_prompt(query, latest_bbox_block, current_answer_output)
             logic_messages = self._build_messages(logic_prompt, visuals)
             logic_output, _ = self._generate_once(
                 logic_messages,
                 gen_kwargs,
                 max_new_tokens=self.logic_verifier_max_new_tokens,
             )
-            logic_feedback, logic_parse_valid = self._parse_logic_self_verifier_output(logic_output)
-            if not logic_parse_valid:
+            logic_feedback, logic_parse_valid = self._parse_logic_self_verifier_output(
+                logic_output, current_answer_output
+            )
+            if (not logic_parse_valid) or (not str(logic_feedback or "").strip()):
                 logic_feedback = "No valid self-verifier feedback was produced. Re-emit the current answer unchanged."
 
             rewrite_prompt = self._build_answer_rewrite_prompt(
