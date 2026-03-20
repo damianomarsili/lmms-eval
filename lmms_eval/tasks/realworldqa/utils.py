@@ -153,6 +153,8 @@ class MultiChoiceRegexFilter(ExtendedRegexFilter):
             # Regex to extract multiple choice options from the question
             multiple_choices_regex = re.compile(r"\b([A-Z])\.\s+([^\n]*)")
             matches = multiple_choices_regex.findall(doc["question"])
+            target = str(doc.get("answer", "")).strip().lower()
+            is_yes_no_target = target in {"yes", "no"}
 
             has_choices = len(matches) > 0
 
@@ -176,7 +178,15 @@ class MultiChoiceRegexFilter(ExtendedRegexFilter):
 
                 # If the question has no explicit choices, keep the response as-is (trimmed)
                 if not has_choices:
-                    filtered.append(resp.strip())
+                    cleaned_resp = resp.strip()
+                    if is_yes_no_target:
+                        normalized = _normalize_yes_no(cleaned_resp)
+                        if normalized in {"yes", "no"}:
+                            filtered.append(normalized)
+                        else:
+                            filtered.append(cleaned_resp)
+                    else:
+                        filtered.append(cleaned_resp)
                     continue
 
                 # Fast path: if a standalone choice letter (A-D/a-d) appears, use it directly

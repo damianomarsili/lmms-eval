@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple, Union
 from PIL import Image
 
 from lmms_eval.api.registry import register_model
-from lmms_eval.models.simple.sttv_vllm import LocEntry, STTVVLLM
+from lmms_eval.models.simple.sttv_vllm import BBOX_2D_ENTRY_PATTERN, LocEntry, STTVVLLM
 
 LOGIC_STEP_EDIT_PATTERN = re.compile(r"(?i)^EDIT_STEP\s+(?P<idx>\d+)\s*:\s*(?P<body>.+)$")
 REASON_BLOCK_PATTERN = re.compile(r"(?is)<reason>\s*(?P<body>.*?)\s*</reason>")
@@ -197,6 +197,65 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             "Do not output any <bbox_2d>."
         )
 
+    def _extract_partial_bbox_2d_payload(self, text: str) -> str:
+        raw_text = str(text or "")
+        lowered = raw_text.lower()
+        open_tag = "<bbox_2d>"
+        close_tag = "</bbox_2d>"
+        start = lowered.find(open_tag)
+        if start == -1:
+            return ""
+        start += len(open_tag)
+        end = lowered.find(close_tag, start)
+        if end == -1:
+            end = len(raw_text)
+        return raw_text[start:end].strip()
+
+    def _parse_bbox_2d_entries_relaxed(self, payload: str) -> List[LocEntry]:
+        entries: List[LocEntry] = []
+        for raw_line in str(payload or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = BBOX_2D_ENTRY_PATTERN.fullmatch(line)
+            if match is None:
+                if entries:
+                    break
+                return []
+            try:
+                idx = int(match.group("idx"))
+            except (TypeError, ValueError):
+                if entries:
+                    break
+                return []
+            if idx != len(entries) + 1:
+                if entries:
+                    break
+                return []
+
+            label = match.group("label").strip()
+            if not label:
+                if entries:
+                    break
+                return []
+            numbers = re.findall(r"-?\d+(?:\.\d+)?", match.group("coords"))
+            if len(numbers) != 4:
+                if entries:
+                    break
+                return []
+            coords_tuple = tuple(float(n) for n in numbers[:4])
+            x1, y1, x2, y2 = coords_tuple
+            if not (0.0 <= x1 <= 1000.0 and 0.0 <= y1 <= 1000.0 and 0.0 <= x2 <= 1000.0 and 0.0 <= y2 <= 1000.0):
+                if entries:
+                    break
+                return []
+            if x2 <= x1 or y2 <= y1:
+                if entries:
+                    break
+                return []
+            entries.append(LocEntry(image_index=1, label=label, coords=coords_tuple))
+        return entries
+
     def _generate_with_verifier(
         self,
         messages: List[Dict[str, object]],
@@ -216,52 +275,72 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         bbox_line_format = '1: label="object_name", [x_min, y_min, x_max, y_max]'
         total_generated_tokens = 0
         max_total_tokens = self.generation_max_new_tokens
-        if max_total_tokens <= 0:
-            generation_metadata["grounding_stop_reason"] = "generation_budget_exhausted_before_start"
-            return "", generation_metadata
-
-        remaining = max_total_tokens - total_generated_tokens
-        chunk, new_tokens = self._generate_once(
-            messages,
-            gen_kwargs,
-            stop_sequences=["</bbox_2d>"],
-            max_new_tokens=max(1, min(max_new_tokens_per_chunk, remaining)),
-        )
-        total_generated_tokens += new_tokens
-        if not chunk.strip():
-            generation_metadata["grounding_stop_reason"] = "empty_initial_grounding_output"
-            return "", generation_metadata
-        output_chunks.append(chunk)
-        messages.append({"role": "assistant", "content": [{"type": "text", "text": chunk}]})
-
-        loc_payloads = self._extract_bbox_2d_payloads(chunk)
-        if len(loc_payloads) != 1:
-            generation_metadata["grounding_stop_reason"] = "initial_grounding_output_missing_single_bbox_block"
-            return "".join(output_chunks), generation_metadata
-        loc_payload = loc_payloads[0]
-        if self._has_missing_label(loc_payload):
-            generation_metadata["grounding_stop_reason"] = "initial_grounding_output_missing_label"
-            return "".join(output_chunks), generation_metadata
-        entries = self._parse_bbox_2d_entries(loc_payload)
-        if not entries or self._has_invalid_box(entries):
-            generation_metadata["grounding_stop_reason"] = "initial_grounding_output_invalid_boxes"
-            return "".join(output_chunks), generation_metadata
-
-        current_entries = entries
         grounding_rounds = generation_metadata["grounding_rounds"]
         assert isinstance(grounding_rounds, list)
-        grounding_rounds.append(
-            self._build_grounding_round_record(
-                stage="initial_prediction",
-                round_index=0,
-                raw_output=chunk,
-                candidate_entries=current_entries,
-                accepted_entries=current_entries,
-                accepted=True,
-            )
-        )
+        current_entries: List[LocEntry] = []
 
+        if max_total_tokens <= 0:
+            generation_metadata["grounding_stop_reason"] = "generation_budget_exhausted_before_start"
+        else:
+            remaining = max_total_tokens - total_generated_tokens
+            chunk, new_tokens = self._generate_once(
+                messages,
+                gen_kwargs,
+                stop_sequences=["</bbox_2d>"],
+                max_new_tokens=max(1, min(max_new_tokens_per_chunk, remaining)),
+            )
+            total_generated_tokens += new_tokens
+
+            if not chunk.strip():
+                generation_metadata["grounding_stop_reason"] = "empty_initial_grounding_output"
+            else:
+                output_chunks.append(chunk)
+                messages.append({"role": "assistant", "content": [{"type": "text", "text": chunk}]})
+
+                initial_entries: List[LocEntry] = []
+                initial_parse_issue: Optional[str] = None
+                initial_accepted = False
+
+                loc_payloads = self._extract_bbox_2d_payloads(chunk)
+                if len(loc_payloads) == 1:
+                    loc_payload = loc_payloads[0]
+                    if self._has_missing_label(loc_payload):
+                        initial_parse_issue = "initial_grounding_output_missing_label"
+                    else:
+                        strict_entries = self._parse_bbox_2d_entries(loc_payload)
+                        if strict_entries and not self._has_invalid_box(strict_entries):
+                            initial_entries = strict_entries
+                            initial_accepted = True
+                        else:
+                            initial_parse_issue = "initial_grounding_output_invalid_boxes"
+                else:
+                    initial_parse_issue = "initial_grounding_output_missing_single_bbox_block"
+
+                if not initial_entries:
+                    partial_payload = self._extract_partial_bbox_2d_payload(chunk)
+                    recovered_entries = self._parse_bbox_2d_entries_relaxed(partial_payload)
+                    if recovered_entries and not self._has_invalid_box(recovered_entries):
+                        initial_entries = recovered_entries
+                        generation_metadata["initial_grounding_recovered_from_partial"] = True
+
+                current_entries = initial_entries
+                grounding_rounds.append(
+                    self._build_grounding_round_record(
+                        stage="initial_prediction",
+                        round_index=0,
+                        raw_output=chunk,
+                        candidate_entries=initial_entries,
+                        accepted_entries=initial_entries,
+                        accepted=initial_accepted,
+                    )
+                )
+                if initial_parse_issue is not None:
+                    generation_metadata["initial_grounding_issue"] = initial_parse_issue
+
+        can_run_grounding_verifier = bool(output_chunks)
         for round_index in range(1, self.loc_verifier_rounds + 1):
+            if not can_run_grounding_verifier:
+                break
             entries_by_image: Dict[int, List[LocEntry]] = {}
             for entry in current_entries:
                 entries_by_image.setdefault(entry.image_index, []).append(entry)
@@ -300,7 +379,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             remaining = max_total_tokens - total_generated_tokens
             if remaining <= 0:
                 generation_metadata["grounding_stop_reason"] = "generation_budget_exhausted_during_grounding_verification"
-                return "".join(output_chunks), generation_metadata
+                break
             correction_chunk, correction_tokens = self._generate_once(
                 messages,
                 gen_kwargs,
@@ -355,7 +434,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             answer_messages,
             gen_kwargs,
             stop_sequences=["</answer>"],
-            max_new_tokens=max_new_tokens_per_chunk,
+            max_new_tokens=max(1, max_new_tokens_per_chunk),
         )
 
         for _ in range(self.logic_verifier_rounds):
@@ -364,7 +443,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             logic_output, _ = self._generate_once(
                 logic_messages,
                 gen_kwargs,
-                max_new_tokens=self.logic_verifier_max_new_tokens,
+                max_new_tokens=max(1, self.logic_verifier_max_new_tokens),
             )
             logic_feedback, logic_parse_valid = self._parse_logic_self_verifier_output(
                 logic_output, current_answer_output
@@ -383,9 +462,12 @@ class STTVAllVerifiersVLLM(STTVVLLM):
                 rewrite_messages,
                 gen_kwargs,
                 stop_sequences=["</answer>"],
-                max_new_tokens=max_new_tokens_per_chunk,
+                max_new_tokens=max(1, max_new_tokens_per_chunk),
             )
 
         output_chunks.append(current_answer_output)
+        prior_stop_reason = generation_metadata.get("grounding_stop_reason")
+        if isinstance(prior_stop_reason, str) and prior_stop_reason and prior_stop_reason != "continued_to_answer_generation":
+            generation_metadata["grounding_pre_answer_stop_reason"] = prior_stop_reason
         generation_metadata["grounding_stop_reason"] = "continued_to_answer_generation"
         return "".join(output_chunks), generation_metadata

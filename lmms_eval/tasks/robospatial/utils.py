@@ -16,7 +16,13 @@ def robospatial_doc_to_visual(doc: Dict[str, Any]) -> List[Any]:
 
 
 def robospatial_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[dict[str, Any]] = None) -> str:
-    return doc["question"].strip()
+    question = str(doc["question"]).strip()
+    if str(doc.get("category", "")).strip().lower() == "compatibility":
+        question += (
+            "\n\nNote: The question does not ask whether the object is currently in that configuration; "
+            "it asks whether it could hypothetically fit there."
+        )
+    return question
 
 
 def robospatial_doc_to_target(doc: Dict[str, Any]) -> str:

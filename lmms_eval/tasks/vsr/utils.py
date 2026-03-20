@@ -159,8 +159,12 @@ def vsr_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[dic
     pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
     post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
     query = str(doc.get("caption", "")).strip()
+    guidance = (
+        "Judge the statement by visual semantic relation, not raw box coordinates alone. "
+        "Avoid over-literal wording, and ensure your final 0/1 matches your reasoning."
+    )
 
-    parts = [pre_prompt, query, post_prompt]
+    parts = [pre_prompt, query, guidance, post_prompt]
     return "\n".join([part for part in parts if part])
 
 

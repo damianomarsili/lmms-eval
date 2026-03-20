@@ -16,21 +16,26 @@ Output format:
 Return ONLY plain text corrections with one action per line (no JSON, no markdown, no preamble).
 Each line MUST be exactly one of:
 1) EDIT <idx>: <explicit coordinate edit instructions>
-2) ADD label="object_name", [x_min, y_min, x_max, y_max]
+2) REMOVE <idx>
+3) ADD label="object_name", [x_min, y_min, x_max, y_max]
 
 Requirements:
 - corrections must be actionable and specific (add/move/resize/relabel predictions).
 - corrections should explicitly address both:
   1) existing boxes (how to move/resize/relabel), and
   2) missing objects that should be added.
-- For over-predicted boxes, use EDIT to tighten or relabel them. Do not delete predictions.
+- For over-predicted boxes, use REMOVE only when the prediction is truly extra and should be dropped.
+- Prefer EDIT to improve localization whenever a box corresponds to a real object.
 - Explicitly call out under-predictions that should be added.
 - For EDIT lines, use geometric edge terms with concrete values:
   "EDIT 2: move x_min from ~420 to ~460 and y_max from ~730 to ~700."
 - Prefer small coordinate edits (edge moves) with EDIT over large rewrites.
+- For REMOVE lines, output only the index:
+  "REMOVE 3"
 - For ADD lines, provide an explicit label and coordinates:
   "ADD label=\"lamp\", [430, 120, 560, 740]"
 - Use ADD only for new, currently missing objects. Do NOT use ADD for objects that are already detected.
+- Never REMOVE a box and then ADD the identical box back.
 - Avoid vague statements like:
   "EDIT 2: fix the lamp box."
 - If predictions are already strong, provide at least one small refinement.

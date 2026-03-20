@@ -73,6 +73,20 @@ class STTVVLLM(lmms):
         verifier_image_side: int = 1024,
         generation_max_new_tokens: int = 2048,
         generation_chunk_max_new_tokens: int = 256,
+        generation_greedy: Union[bool, str, int, float] = False,
+        generation_temperature: float = 0.7,
+        generation_top_p: float = 0.8,
+        generation_top_k: int = 20,
+        generation_repetition_penalty: float = 1.0,
+        generation_presence_penalty: float = 1.5,
+        generation_frequency_penalty: float = 0.0,
+        verifier_greedy: Optional[Union[bool, str, int, float]] = None,
+        verifier_temperature: Optional[float] = None,
+        verifier_top_p: Optional[float] = None,
+        verifier_top_k: Optional[int] = None,
+        verifier_repetition_penalty: Optional[float] = None,
+        verifier_presence_penalty: Optional[float] = None,
+        verifier_frequency_penalty: Optional[float] = None,
         trust_remote_code: Optional[bool] = True,
         chat_template: Optional[str] = None,
         min_image_pixels: int = 28,
@@ -149,6 +163,35 @@ class STTVVLLM(lmms):
         self.verifier_image_side = int(verifier_image_side)
         self.generation_max_new_tokens = max(64, int(generation_max_new_tokens))
         self.generation_chunk_max_new_tokens = max(1, int(generation_chunk_max_new_tokens))
+        self.generation_greedy = self._coerce_bool(generation_greedy)
+        self.generation_temperature = float(generation_temperature)
+        self.generation_top_p = float(generation_top_p)
+        self.generation_top_k = int(generation_top_k)
+        self.generation_repetition_penalty = float(generation_repetition_penalty)
+        self.generation_presence_penalty = float(generation_presence_penalty)
+        self.generation_frequency_penalty = float(generation_frequency_penalty)
+
+        self.verifier_greedy = (
+            self._coerce_bool(verifier_greedy) if verifier_greedy is not None else self.generation_greedy
+        )
+        self.verifier_temperature = (
+            float(verifier_temperature) if verifier_temperature is not None else self.generation_temperature
+        )
+        self.verifier_top_p = float(verifier_top_p) if verifier_top_p is not None else self.generation_top_p
+        self.verifier_top_k = int(verifier_top_k) if verifier_top_k is not None else self.generation_top_k
+        self.verifier_repetition_penalty = (
+            float(verifier_repetition_penalty)
+            if verifier_repetition_penalty is not None
+            else self.generation_repetition_penalty
+        )
+        self.verifier_presence_penalty = (
+            float(verifier_presence_penalty) if verifier_presence_penalty is not None else self.generation_presence_penalty
+        )
+        self.verifier_frequency_penalty = (
+            float(verifier_frequency_penalty)
+            if verifier_frequency_penalty is not None
+            else self.generation_frequency_penalty
+        )
 
         self.prompt_template = self._load_prompt_template(prompt_path, self.depth_enabled)
         self.instruction_text = self._load_instruction_text(self.instruction_mode)
@@ -325,6 +368,45 @@ class STTVVLLM(lmms):
         content_parts.append({"type": "text", "text": context})
         return [{"role": "user", "content": content_parts}]
 
+    def _build_sampling_params(
+        self,
+        *,
+        max_tokens: int,
+        stop_sequences: Optional[List[str]] = None,
+        use_verifier_sampling: bool = False,
+    ) -> Dict[str, object]:
+        if use_verifier_sampling:
+            greedy = self.verifier_greedy
+            temperature = self.verifier_temperature
+            top_p = self.verifier_top_p
+            top_k = self.verifier_top_k
+            repetition_penalty = self.verifier_repetition_penalty
+            presence_penalty = self.verifier_presence_penalty
+            frequency_penalty = self.verifier_frequency_penalty
+        else:
+            greedy = self.generation_greedy
+            temperature = self.generation_temperature
+            top_p = self.generation_top_p
+            top_k = self.generation_top_k
+            repetition_penalty = self.generation_repetition_penalty
+            presence_penalty = self.generation_presence_penalty
+            frequency_penalty = self.generation_frequency_penalty
+
+        params: Dict[str, object] = {"max_tokens": int(max_tokens), "seed": self.seed}
+        if greedy:
+            params["temperature"] = 0.0
+            params["top_p"] = 1.0
+        else:
+            params["temperature"] = float(temperature)
+            params["top_p"] = float(top_p)
+            params["top_k"] = int(top_k)
+            params["repetition_penalty"] = float(repetition_penalty)
+            params["presence_penalty"] = float(presence_penalty)
+            params["frequency_penalty"] = float(frequency_penalty)
+        if stop_sequences:
+            params["stop"] = stop_sequences
+        return params
+
     def _generate_once(
         self,
         messages: List[Dict[str, object]],
@@ -333,9 +415,11 @@ class STTVVLLM(lmms):
         max_new_tokens: int = 256,
     ) -> Tuple[str, int]:
         del gen_kwargs
-        params: Dict[str, object] = {"max_tokens": max_new_tokens, "temperature": 0, "top_p": 1.0, "seed": self.seed}
-        if stop_sequences:
-            params["stop"] = stop_sequences
+        params = self._build_sampling_params(
+            max_tokens=max_new_tokens,
+            stop_sequences=stop_sequences,
+            use_verifier_sampling=False,
+        )
         sampling_params = SamplingParams(**params)
 
         if self.chat_template is not None:
@@ -516,12 +600,12 @@ class STTVVLLM(lmms):
         content.append({"type": "text", "text": prompt})
 
         messages = [{"role": "user", "content": content}]
-        sampling_params = SamplingParams(
+        params = self._build_sampling_params(
             max_tokens=self.verifier_max_new_tokens,
-            temperature=0,
-            top_p=1.0,
-            seed=self.seed,
+            stop_sequences=None,
+            use_verifier_sampling=True,
         )
+        sampling_params = SamplingParams(**params)
         if self.chat_template is not None:
             response = self.client.chat(sampling_params=sampling_params, messages=messages, chat_template=self.chat_template)
         else:
