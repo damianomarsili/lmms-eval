@@ -35,6 +35,8 @@ Requirements:
 - For ADD lines, provide an explicit label and coordinates:
   "ADD label=\"lamp\", [430, 120, 560, 740]"
 - Use ADD only for new, currently missing objects. Do NOT use ADD for objects that are already detected.
+- Do NOT ADD a box for an object instance that is already covered by an existing prediction.
+- If duplicate boxes are present for the same object instance, use REMOVE on the redundant index/indices and keep only the best-localized box.
 - Never REMOVE a box and then ADD the identical box back.
 - Avoid vague statements like:
   "EDIT 2: fix the lamp box."

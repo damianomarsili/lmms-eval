@@ -57,7 +57,6 @@ class STTVNoVerifierVLLM(STTVVLLM):
             prompt_path=prompt_path,
             instruction_mode=instruction_mode,
             max_image_side=max_image_side,
-            verifier_max_attempts=1,
             verifier_max_new_tokens=32,
             verifier_image_side=max_image_side,
             trust_remote_code=trust_remote_code,

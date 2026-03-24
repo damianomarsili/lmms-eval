@@ -14,7 +14,7 @@ metric_list:
 lmms_eval_specific_kwargs:
   default:
     pre_prompt: ""
-    post_prompt: "\nanswer 0 if the statement is Talse and 1 if the statement is True"
+    post_prompt: "\nFor this binary relation check, output 1 only when the relation is clearly supported by visual evidence and no strong contradictory cue exists; otherwise output 0. Use image semantics (occlusion, relative depth, object orientation/axis, boundary contact) and do not rely on rough box overlap or x/y ordering alone.\nanswer 0 if the statement is False and 1 if the statement is True.\nOutput exactly one <reason>...</reason> and one <answer>...</answer>. Put only 0 or 1 inside <answer>, and close both tags."
 
 generation_kwargs:
   max_new_tokens: 128

@@ -3,7 +3,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 from PIL import Image
+from tqdm import tqdm
 
+from lmms_eval import utils
+from lmms_eval.api.instance import Instance
 from lmms_eval.api.registry import register_model
 from lmms_eval.models.simple.sttv_vllm import BBOX_2D_ENTRY_PATTERN, LocEntry, STTVVLLM
 
@@ -14,6 +17,73 @@ REASON_STEP_LINE_PATTERN = re.compile(r"^\s*(?P<idx>\d+)\.\s*(?P<body>.+?)\s*$")
 
 @register_model("sttv_all_verifiers_vllm")
 class STTVAllVerifiersVLLM(STTVVLLM):
+    _ROBOSPATIAL_COMPATIBILITY_POST_PROMPT = (
+        "Assume objects can be moved and re-placed. "
+        "Judge whether the target placement is physically feasible, not whether objects are currently in that relation. "
+        "Use bounding boxes mainly for size/clearance checks and use the image itself for semantic/depth/occlusion judgment."
+    )
+    _ROBOSPATIAL_CONFIGURATION_POST_PROMPT = (
+        "Bounding boxes are 2D only, x is left/right, y is above/below. "
+        "Greater x values are more right, greater y values are lower. "
+        "Do not use bounding box values x or y to infer depth relations like behind/in-front. "
+        "Use the image for this.\n"
+        "Do not over-rely on the boxes for semantic relations, use the boxes to know where to look at the image "
+        "and evaluate semantic relations based on the image itself not just the boxes!"
+    )
+    _BLINK_COUNTING_POST_PROMPT = (
+        "Do not over-rely on the boxes for semantic relations, use the boxes to know where to look at the image "
+        "and evaluate semantic relations based on the image itself not just the boxes!"
+    )
+    _BLINK_SPATIAL_POST_PROMPT = (
+        "Use the boxes as a guide to locate objects, then decide the asked relation from image semantics. "
+        "Do not infer depth or orientation solely from x/y box coordinates."
+    )
+    _OMNI3D_POST_PROMPT = (
+        "When options are provided, your final answer must be exactly one option token from the provided set (no paraphrase, no extra words). "
+        "For questions that ask \"How many\", your final answer must be a number. "
+        "For any numeric question, output exactly one integer or decimal number only (no fractions like a/b, no units, no extra text). "
+        "If exact counting is uncertain, provide your best numeric estimate instead of refusing. "
+        "Use the provided bounding boxes as a guide, but count from the image itself because detections may be incomplete."
+    )
+    _REALWORLDQA_POST_PROMPT = (
+        "After detecting objects, you MUST think step by step in a non-empty <reason>...</reason> block with numbered steps "
+        "(1., 2., 3., ...), and then output your final answer in <answer>...</answer>. "
+        "Do not skip the <reason> block."
+    )
+    _VSR_POST_PROMPT = (
+        "For this binary relation check, output 1 only when the relation is clearly supported by visual evidence and no strong contradictory cue exists; "
+        "otherwise output 0. Use image semantics (occlusion, relative depth, object orientation/axis, boundary contact) and do not rely on rough box "
+        "overlap or x/y ordering alone. "
+        "For this true/false relation check, output 1 only if the relation is clearly and unambiguously visible in the image; "
+        "if evidence is partial, occluded, ambiguous, or based only on rough box overlap/order, output 0. "
+        "After detecting objects, you MUST provide a non-empty step-by-step <reason>...</reason> with numbered steps, "
+        "then output only 0 or 1 in <answer>...</answer>."
+    )
+    _VSR_FRONT_BACK_POST_PROMPT = (
+        "For in-front-of/behind relations, use depth cues only: occlusion (who blocks whom), relative scale for similar object types, "
+        "and perspective context. Do not decide front/behind from 2D x/y ordering or overlap alone. Output 1 only when at least one "
+        "strong depth cue supports the relation and no strong cue contradicts it; otherwise output 0."
+    )
+    _CV_BENCH_POST_PROMPT = (
+        "Bounding boxes are a starting guide only. Do not use x/y coordinates alone to infer depth ordering (closer/farther, front/behind); "
+        "use visual depth cues from the image (occlusion, relative scale for similar objects, perspective). "
+        "For counting questions, count from the image itself and use boxes only as guidance, since detections can be noisy or incomplete. "
+        "Count unique instances only: do not count duplicate/overlapping boxes of the same object as multiple instances, and do not count partial fragments as separate objects. "
+        "For relation questions, evaluate the first named object/entity with respect to the second exactly as asked, and do not invert subject/object roles. "
+        "Before outputting the final option, run one consistency check that the option text matches your computed count/relation, then output only that option."
+    )
+    _OMNISPATIAL_POST_PROMPT = (
+        "You MUST always choose exactly one provided option (A/B/C/D), even when uncertain; do not refuse and do not output "
+        "\"cannot determine\" unless that exact option is the best choice among the provided options. "
+        "After detecting objects, you MUST provide a non-empty step-by-step <reason>...</reason> with numbered steps "
+        "(1., 2., 3., ...), then output exactly one option letter inside <answer>...</answer>."
+    )
+    _COUNTBENCHQA_LOGIC_POST_PROMPT = (
+        "For counting questions, explicitly check whether multiple boxes of the same label refer to the same object. "
+        "If boxes are duplicate detections of one object (heavy overlap / near-identical placement), refine the reasoning "
+        "to count unique objects only and avoid overcounting."
+    )
+
     def __init__(
         self,
         model: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
@@ -81,8 +151,8 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             raise ValueError(f"Logic self-verifier prompt file is empty: {prompt_file}")
         return prompt_text
 
-    def _build_clean_answer_prompt(self, query: str, latest_bbox_block: str) -> str:
-        query_text = query.strip()
+    def _build_clean_answer_prompt(self, query: str, latest_bbox_block: str, task_name: str) -> str:
+        query_text = self._augment_query_with_task_post_prompt(query, task_name).strip()
         return (
             f"Original query:\n{query_text}\n\n"
             "Detected objects (in [x_min, y_min, x_max, y_max] format with coordinates in [0,1000]):\n"
@@ -95,10 +165,13 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         )
 
     def _build_logic_self_verifier_prompt(
-        self, query: str, latest_bbox_block: str, latest_answer_output: str
+        self, query: str, latest_bbox_block: str, latest_answer_output: str, task_name: str
     ) -> str:
+        query_text = self._augment_query_with_task_post_prompt(query, task_name).strip()
+        if str(task_name or "").strip().lower() == "countbenchqa":
+            query_text = f"{query_text}\n\n{self._COUNTBENCHQA_LOGIC_POST_PROMPT}"
         return self.logic_self_verifier_template.format(
-            query=query.strip(),
+            query=query_text,
             detected_objects=str(latest_bbox_block or "").strip(),
             answer=str(latest_answer_output or "").strip(),
         )
@@ -178,8 +251,9 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         latest_bbox_block: str,
         current_answer_output: str,
         logic_feedback: str,
+        task_name: str,
     ) -> str:
-        clean_prompt = self._build_clean_answer_prompt(query, latest_bbox_block)
+        clean_prompt = self._build_clean_answer_prompt(query, latest_bbox_block, task_name)
         return (
             f"{clean_prompt}\n\n"
             f"Current answer draft:\n{str(current_answer_output or '').strip()}\n\n"
@@ -188,8 +262,10 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             "then output a final <answer> that follows from the updated reasoning.\n"
             f"Feedback:\n{logic_feedback}\n"
             "You MUST update the reasoning to incorporate the feedback. "
+            "If the feedback is empty, non-concrete, or does not identify a checkable error, re-emit the current answer draft unchanged. "
             "You MUST keep the <reason> step-indexed with numbered lines (1., 2., 3., ... one step per line). "
             "You MUST then produce the final answer from that updated reasoning. "
+            "Do NOT change the final <answer> unless the corrected reasoning changes the computed result. "
             "You MUST incorporate the feedback and MUST NOT make unrelated changes. "
             "Please output exactly one full <reason> block and then one full <answer> block. "
             "Ensure that the answer is either yes/no, one word, or one number. "
@@ -256,12 +332,103 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             entries.append(LocEntry(image_index=1, label=label, coords=coords_tuple))
         return entries
 
+    def _get_task_specific_post_prompt(self, task_name: str) -> str:
+        task_key = str(task_name or "").strip().lower()
+        if task_key == "robospatial_compatibility":
+            return self._ROBOSPATIAL_COMPATIBILITY_POST_PROMPT
+        if task_key == "robospatial_configuration":
+            return self._ROBOSPATIAL_CONFIGURATION_POST_PROMPT
+        if task_key == "blink_counting":
+            return self._BLINK_COUNTING_POST_PROMPT
+        if task_key == "blink_spatial_relation":
+            return self._BLINK_SPATIAL_POST_PROMPT
+        if task_key == "omni3d_bench":
+            return self._OMNI3D_POST_PROMPT
+        if task_key == "realworldqa":
+            return self._REALWORLDQA_POST_PROMPT
+        if task_key == "vsr":
+            return self._VSR_POST_PROMPT
+        if task_key == "omnispatial_test":
+            return self._OMNISPATIAL_POST_PROMPT
+        if task_key == "cv-bench":
+            return self._CV_BENCH_POST_PROMPT
+        return ""
+
+    def _augment_query_with_task_post_prompt(self, query: str, task_name: str) -> str:
+        base_query = str(query or "").strip()
+        task_key = str(task_name or "").strip().lower()
+        extras: List[str] = []
+        task_prompt = self._get_task_specific_post_prompt(task_name)
+        if task_prompt:
+            extras.append(task_prompt)
+
+        if task_key == "vsr":
+            lowered_query = base_query.lower()
+            if "in front of" in lowered_query or "behind" in lowered_query:
+                extras.append(self._VSR_FRONT_BACK_POST_PROMPT)
+
+        if not extras:
+            return base_query
+        return f"{base_query}\n\n" + "\n".join(extras)
+
+    def generate_until(self, requests: List[Instance]) -> List[str]:
+        res = []
+
+        def _collate(x):
+            return -len(x[0]), x[0]
+
+        pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
+        re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
+        chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
+        self.last_generation_metadata = None
+        all_generation_metadata: List[Dict[str, object]] = []
+        for chunk in chunks:
+            contexts, all_gen_kwargs, doc_to_visual, doc_id, task, split = zip(*chunk)
+            task_name = task[0]
+            split_name = split[0]
+            grounding_only = self._is_grounding_only_task(task_name)
+            visual_list = [doc_to_visual[0](self.task_dict[task_name][split_name][ids]) for ids in doc_id]
+            gen_kwargs = all_gen_kwargs[0]
+
+            if isinstance(contexts, tuple):
+                contexts = list(contexts)
+
+            for i, context in enumerate(contexts):
+                if "<image" in context:
+                    context = re.sub(r"<image\s*\d+>", "", context)
+                    context = context.replace("<image>", "")
+                query_text = self._augment_query_with_task_post_prompt(context, task_name)
+                prompted_context = self._build_prompted_context(query_text)
+                messages = self._build_messages(prompted_context, visual_list[i])
+
+                visuals = visual_list[i] if isinstance(visual_list[i], list) else [visual_list[i]]
+                visuals = [item for item in visuals if isinstance(item, Image.Image)]
+                answer, metadata = self._generate_with_verifier(
+                    messages,
+                    dict(gen_kwargs),
+                    visuals,
+                    context,
+                    task_name,
+                    grounding_only=grounding_only,
+                )
+                res.append(answer)
+                all_generation_metadata.append(metadata)
+                self.cache_hook.add_partial("generate_until", (context, gen_kwargs), answer)
+                pbar.update(1)
+                self._cleanup_after_sample()
+
+        res = re_ords.get_original(res)
+        self.last_generation_metadata = re_ords.get_original(all_generation_metadata)
+        pbar.close()
+        return res
+
     def _generate_with_verifier(
         self,
         messages: List[Dict[str, object]],
         gen_kwargs: Dict[str, object],
         visuals: List[Image.Image],
         query: str,
+        task_name: str,
         grounding_only: bool = False,
     ) -> Tuple[str, Dict[str, object]]:
         output_chunks: List[str] = []
@@ -428,7 +595,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
             generation_metadata["grounding_stop_reason"] = "grounding_only_task"
             return "".join(output_chunks), generation_metadata
 
-        answer_prompt = self._build_clean_answer_prompt(query, latest_bbox_block)
+        answer_prompt = self._build_clean_answer_prompt(query, latest_bbox_block, task_name)
         answer_messages = self._build_messages(answer_prompt, visuals)
         current_answer_output, _ = self._generate_once(
             answer_messages,
@@ -438,7 +605,9 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         )
 
         for _ in range(self.logic_verifier_rounds):
-            logic_prompt = self._build_logic_self_verifier_prompt(query, latest_bbox_block, current_answer_output)
+            logic_prompt = self._build_logic_self_verifier_prompt(
+                query, latest_bbox_block, current_answer_output, task_name
+            )
             logic_messages = self._build_messages(logic_prompt, visuals)
             logic_output, _ = self._generate_once(
                 logic_messages,
@@ -456,6 +625,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
                 latest_bbox_block=latest_bbox_block,
                 current_answer_output=current_answer_output,
                 logic_feedback=logic_feedback,
+                task_name=task_name,
             )
             rewrite_messages = self._build_messages(rewrite_prompt, visuals)
             current_answer_output, _ = self._generate_once(
