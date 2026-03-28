@@ -25,6 +25,18 @@ def _strip_think_prefix(text: Optional[str]) -> Optional[str]:
         return re.split(r"</(?:plan|think)>", text, flags=re.IGNORECASE)[-1].strip()
     return re.sub(r"(?is)^\s*<(?:plan|think)>.*?</(?:plan|think)>\s*", "", text, count=1)
 
+def _extract_answer_tag_text(text: Optional[str]) -> Optional[str]:
+    """
+    Extract only the final answer payload from <answer>...</answer>.
+    If tags are missing, return None (no fallback to free text).
+    """
+    if not isinstance(text, str):
+        return None
+    matches = re.findall(r"(?is)<answer>\s*(.*?)\s*</answer>", text)
+    if not matches:
+        return None
+    return matches[-1].strip()
+
 def doc_to_visual(doc):
     image = doc["image"]
     if isinstance(image, Image.Image):
@@ -113,7 +125,8 @@ def interleave_process_results(doc, results):
     choice_mapping = _choice_map(choices)
     gold_label = _resolve_label(doc["answer"], choice_mapping)
     pred_raw = _strip_think_prefix(results[0] if results else "")
-    pred_label = _resolve_label(pred_raw, choice_mapping)
+    pred_answer_only = _extract_answer_tag_text(pred_raw)
+    pred_label = _resolve_label(pred_answer_only, choice_mapping)
     correct = int(gold_label is not None and pred_label == gold_label)
     return {
         "overall_score": {

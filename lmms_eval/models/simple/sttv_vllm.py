@@ -414,37 +414,70 @@ class STTVVLLM(lmms):
         stop_sequences: Optional[List[str]] = None,
         max_new_tokens: int = 256,
     ) -> Tuple[str, int]:
+        outputs = self._generate_batch_once(
+            [messages],
+            gen_kwargs,
+            stop_sequences=stop_sequences,
+            max_new_tokens=max_new_tokens,
+        )
+        if not outputs:
+            return "", 0
+        return outputs[0]
+
+    def _generate_batch_once(
+        self,
+        batched_messages: List[List[Dict[str, object]]],
+        gen_kwargs: Dict[str, object],
+        stop_sequences: Optional[List[str]] = None,
+        max_new_tokens: int = 256,
+        use_verifier_sampling: bool = False,
+    ) -> List[Tuple[str, int]]:
         del gen_kwargs
+        if not batched_messages:
+            return []
+
         params = self._build_sampling_params(
             max_tokens=max_new_tokens,
             stop_sequences=stop_sequences,
-            use_verifier_sampling=False,
+            use_verifier_sampling=use_verifier_sampling,
         )
         sampling_params = SamplingParams(**params)
 
         if self.chat_template is not None:
-            response = self.client.chat(sampling_params=sampling_params, messages=messages, chat_template=self.chat_template)
+            response = self.client.chat(
+                sampling_params=sampling_params,
+                messages=batched_messages,
+                chat_template=self.chat_template,
+            )
         else:
-            response = self.client.chat(sampling_params=sampling_params, messages=messages)
+            response = self.client.chat(sampling_params=sampling_params, messages=batched_messages)
 
-        output = response[0].outputs[0]
-        decoded = output.text
-        token_count = len(getattr(output, "token_ids", []) or [])
-        if stop_sequences:
-            stop_index = None
-            stop_token = None
-            for sequence in stop_sequences:
-                idx = decoded.find(sequence)
-                if idx != -1 and (stop_index is None or idx < stop_index):
-                    stop_index = idx
-                    stop_token = sequence
-            if stop_index is not None and stop_token is not None:
-                decoded = decoded[: stop_index + len(stop_token)]
-            else:
-                stop_reason = getattr(output, "stop_reason", None)
-                if isinstance(stop_reason, str) and stop_reason in stop_sequences:
-                    decoded = f"{decoded}{stop_reason}"
-        return decoded, token_count
+        if len(response) != len(batched_messages):
+            raise RuntimeError(
+                f"vLLM returned {len(response)} responses for {len(batched_messages)} inputs in batched chat call."
+            )
+
+        outputs: List[Tuple[str, int]] = []
+        for response_item in response:
+            output = response_item.outputs[0]
+            decoded = output.text
+            token_count = len(getattr(output, "token_ids", []) or [])
+            if stop_sequences:
+                stop_index = None
+                stop_token = None
+                for sequence in stop_sequences:
+                    idx = decoded.find(sequence)
+                    if idx != -1 and (stop_index is None or idx < stop_index):
+                        stop_index = idx
+                        stop_token = sequence
+                if stop_index is not None and stop_token is not None:
+                    decoded = decoded[: stop_index + len(stop_token)]
+                else:
+                    stop_reason = getattr(output, "stop_reason", None)
+                    if isinstance(stop_reason, str) and stop_reason in stop_sequences:
+                        decoded = f"{decoded}{stop_reason}"
+            outputs.append((decoded, token_count))
+        return outputs
 
     def _extract_bbox_2d_payloads(self, text: str) -> List[str]:
         if not text:

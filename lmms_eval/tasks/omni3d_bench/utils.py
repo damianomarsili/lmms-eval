@@ -1,11 +1,13 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 MRA_THRESHOLDS = [0.5, 0.45, 0.40, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.05]
 YES_SET = {"yes", "y", "yeah", "yep", "true", "1"}
 NO_SET = {"no", "n", "nope", "false", "0"}
 NUMBER_PATTERN = re.compile(r"-?\d+(?:\.\d+)?(?:e[-+]?\d+)?", re.IGNORECASE)
+DECIMAL_LITERAL_PATTERN = re.compile(r"^\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?\s*$", re.IGNORECASE)
+FRACTION_LITERAL_PATTERN = re.compile(r"^\s*([-+]?\d+)\s*/\s*([-+]?\d+)\s*$")
 
 
 def omni3d_doc_to_visual(doc: Dict[str, Any]) -> List[Any]:
@@ -15,11 +17,32 @@ def omni3d_doc_to_visual(doc: Dict[str, Any]) -> List[Any]:
     return [image]
 
 
+def _answer_subtype(doc: Dict[str, Any]) -> str:
+    ans_type = str(doc.get("answer_type", "")).lower()
+    if ans_type == "int":
+        return "num_ct"
+    if ans_type == "float":
+        return "num_other"
+    if ans_type == "str":
+        answer = str(doc.get("answer", "")).strip().lower()
+        if answer in {"yes", "no"}:
+            return "yes_no"
+        return "multi"
+    return "unknown"
+
+
 def omni3d_doc_to_text(doc: Dict[str, Any], lmms_eval_specific_kwargs: Optional[dict[str, Any]] = None) -> str:
     if lmms_eval_specific_kwargs is None:
         lmms_eval_specific_kwargs = {}
+    subtype = _answer_subtype(doc)
     pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
     post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
+    pre_prompt_by_subtype = lmms_eval_specific_kwargs.get("pre_prompt_by_subtype", {})
+    post_prompt_by_subtype = lmms_eval_specific_kwargs.get("post_prompt_by_subtype", {})
+    if isinstance(pre_prompt_by_subtype, dict):
+        pre_prompt = str(pre_prompt_by_subtype.get(subtype, pre_prompt))
+    if isinstance(post_prompt_by_subtype, dict):
+        post_prompt = str(post_prompt_by_subtype.get(subtype, post_prompt))
     question = doc["question"].strip()
     parts = [pre_prompt, question, post_prompt]
     return "\n".join([p for p in parts if p])
@@ -62,27 +85,48 @@ def _extract_float(text: str) -> Optional[float]:
         return None
 
 
+def _extract_numeric_literal(text: str, allow_fraction: bool = False) -> Optional[float]:
+    text = _strip_think_prefix(text)
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    if allow_fraction:
+        fraction_match = FRACTION_LITERAL_PATTERN.match(cleaned)
+        if fraction_match is not None:
+            numerator = int(fraction_match.group(1))
+            denominator = int(fraction_match.group(2))
+            if denominator == 0:
+                return None
+            return numerator / denominator
+    if not DECIMAL_LITERAL_PATTERN.match(cleaned):
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
 def _normalize_text(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
-def _extract_last_answer_tag(text: str) -> Optional[str]:
+def _extract_last_answer_tag(text: str) -> Tuple[Optional[str], bool]:
     if not isinstance(text, str):
-        return None
+        return None, False
     open_matches = list(re.finditer(r"(?is)<answer>", text))
     if not open_matches:
-        return None
+        return None, False
     match = open_matches[-1]
     content_start = match.end()
     close_match = re.search(r"(?is)</answer>", text[content_start:])
     if close_match:
         content_end = content_start + close_match.start()
-        return text[content_start:content_end].strip()
+        return text[content_start:content_end].strip(), True
     next_tag = re.search(r"(?is)<(reason|depth|bbox_2d|verifier|answer)>", text[content_start:])
     if next_tag:
         content_end = content_start + next_tag.start()
-        return text[content_start:content_end].strip()
-    return text[content_start:].strip()
+        return text[content_start:content_end].strip(), False
+    return text[content_start:].strip(), False
 
 
 def _mra_score(gt: float, pred: float) -> float:
@@ -95,10 +139,10 @@ def _mra_score(gt: float, pred: float) -> float:
 
 
 def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str, Optional[float]]:
-    prediction = _strip_think_prefix(results[0] if results else "")
-    tagged_answer = _extract_last_answer_tag(prediction)
-    if tagged_answer is not None:
-        prediction = tagged_answer
+    raw_prediction = _strip_think_prefix(results[0] if results else "")
+    tagged_answer, answer_tag_closed = _extract_last_answer_tag(raw_prediction)
+    prediction = tagged_answer if tagged_answer is not None else ""
+    strict_answer_valid = bool(tagged_answer is not None and answer_tag_closed and prediction.strip())
 
     ans_type = str(doc.get("answer_type", "")).lower()
     gt_raw = str(doc.get("answer", "")).strip()
@@ -111,11 +155,11 @@ def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str,
 
     if ans_type == "int":
         gt_num_float = _extract_float(gt_raw)
-        pred_num = _extract_float(prediction)
+        pred_num = _extract_numeric_literal(prediction, allow_fraction=False) if strict_answer_valid else None
         gt_num = None if gt_num_float is None else int(gt_num_float)
-        if gt_num is not None and pred_num is not None:
+        if gt_num is not None and pred_num is not None and abs(pred_num - round(pred_num)) <= 1e-9:
             try:
-                pred_int = int(pred_num)
+                pred_int = int(round(pred_num))
                 num_ct_score = 1.0 if pred_int == gt_num else 0.0
             except Exception:
                 num_ct_score = 0.0
@@ -123,18 +167,26 @@ def omni3d_process_results(doc: Dict[str, Any], results: List[str]) -> Dict[str,
             num_ct_score = 0.0
         overall_score = num_ct_score
     elif ans_type == "str":
-        gt_lower = _normalize_text(gt_raw)
-        pred_lower = _normalize_text(prediction)
-        if gt_lower in {"yes", "no"}:
-            normalized_pred = _normalize_yes_no(prediction)
-            yes_no_score = 1.0 if normalized_pred == gt_lower else 0.0
-            overall_score = yes_no_score
+        if not strict_answer_valid:
+            if _normalize_text(gt_raw) in {"yes", "no"}:
+                yes_no_score = 0.0
+                overall_score = yes_no_score
+            else:
+                multi_score = 0.0
+                overall_score = multi_score
         else:
-            multi_score = 1.0 if pred_lower == gt_lower else 0.0
-            overall_score = multi_score
+            gt_lower = _normalize_text(gt_raw)
+            pred_lower = _normalize_text(prediction)
+            if gt_lower in {"yes", "no"}:
+                normalized_pred = _normalize_yes_no(prediction)
+                yes_no_score = 1.0 if normalized_pred == gt_lower else 0.0
+                overall_score = yes_no_score
+            else:
+                multi_score = 1.0 if pred_lower == gt_lower else 0.0
+                overall_score = multi_score
     elif ans_type == "float":
         gt_num = _extract_float(gt_raw)
-        pred_num = _extract_float(prediction)
+        pred_num = _extract_numeric_literal(prediction, allow_fraction=True) if strict_answer_valid else None
         if gt_num is not None and pred_num is not None:
             num_other_score = _mra_score(gt_num, pred_num)
         else:

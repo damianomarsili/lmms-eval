@@ -34,7 +34,12 @@ metric_list:
 lmms_eval_specific_kwargs:
   default:
     pre_prompt: ""
-    post_prompt: "Ensure that the answer is either yes/no, one word, or one number. Do not round answers, express all ratios as unrounded decimals. Nothing else."
+    post_prompt: "Answer only inside <answer>...</answer>."
+    post_prompt_by_subtype:
+      yes_no: "Answer only inside <answer>...</answer>. The final answer must be exactly yes or no."
+      multi: "Answer only inside <answer>...</answer>. The final answer must be exactly one option word from the prompt."
+      num_ct: "Answer only inside <answer>...</answer>. The final answer must be one integer number only."
+      num_other: "Answer only inside <answer>...</answer>. The final answer must be one number only (decimal or fraction), with no words."
 
 metadata:
   - version: 0.0

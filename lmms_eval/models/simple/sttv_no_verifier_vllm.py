@@ -80,29 +80,58 @@ class STTVNoVerifierVLLM(STTVVLLM):
         self.last_generation_metadata = None
         for chunk in chunks:
             contexts, all_gen_kwargs, doc_to_visual, doc_id, task, split = zip(*chunk)
-            task = task[0]
-            split = split[0]
-            visual_list = [doc_to_visual[0](self.task_dict[task][split][ids]) for ids in doc_id]
-            gen_kwargs = all_gen_kwargs[0]
 
             if isinstance(contexts, tuple):
                 contexts = list(contexts)
 
+            batched_messages = []
+            cleaned_contexts = []
+            cleaned_gen_kwargs = []
             for i, context in enumerate(contexts):
+                sample_task = task[i]
+                sample_split = split[i]
+                sample_doc_id = doc_id[i]
+                sample_doc_to_visual = doc_to_visual[i]
+                sample_visual = sample_doc_to_visual(self.task_dict[sample_task][sample_split][sample_doc_id])
                 if "<image" in context:
                     context = re.sub(r"<image\s*\d+>", "", context)
                     context = context.replace("<image>", "")
                 prompted_context = self._build_prompted_context(context)
-                messages = self._build_messages(prompted_context, visual_list[i])
+                messages = self._build_messages(prompted_context, sample_visual)
+                batched_messages.append(messages)
+                cleaned_contexts.append(context)
+                cleaned_gen_kwargs.append(all_gen_kwargs[i])
 
-                answer, _ = self._generate_once(
-                    messages,
-                    dict(gen_kwargs),
+            # Collator usually groups identical generation kwargs, but if they differ
+            # keep correctness by falling back to per-sample calls.
+            all_gen_kwargs_equal = all(kwargs == cleaned_gen_kwargs[0] for kwargs in cleaned_gen_kwargs)
+            if not all_gen_kwargs_equal:
+                batched_outputs = [
+                    self._generate_once(
+                        batched_messages[i],
+                        dict(cleaned_gen_kwargs[i]),
+                        stop_sequences=["</answer>"],
+                        max_new_tokens=self.no_verifier_max_new_tokens,
+                    )
+                    for i in range(len(batched_messages))
+                ]
+            else:
+                batched_outputs = self._generate_batch_once(
+                    batched_messages,
+                    dict(cleaned_gen_kwargs[0]),
                     stop_sequences=["</answer>"],
                     max_new_tokens=self.no_verifier_max_new_tokens,
                 )
+
+            if len(batched_outputs) != len(cleaned_contexts):
+                raise RuntimeError(
+                    f"Batched answer generation size mismatch: got {len(batched_outputs)} outputs "
+                    f"for {len(cleaned_contexts)} inputs."
+                )
+
+            for i, (answer, _) in enumerate(batched_outputs):
                 res.append(answer)
-                self.cache_hook.add_partial("generate_until", (context, gen_kwargs), answer)
+                self.cache_hook.add_partial("generate_until", (cleaned_contexts[i], cleaned_gen_kwargs[i]), answer)
                 pbar.update(1)
                 self._cleanup_after_sample()
 
