@@ -71,6 +71,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "srt_api": "SRT_API",
     "sttv": "STTV",
     "sttv_no_verifier": "STTVNoVerifier",
+    "sttv_answer_only": "STTVAnswerOnly",
     "sttv_no_verifier_vllm": "STTVNoVerifierVLLM",
     "sttv_answer_only_vllm": "STTVAnswerOnlyVLLM",
     "sttv_implicit_grounding_vllm": "STTVImplicitGroundingVLLM",

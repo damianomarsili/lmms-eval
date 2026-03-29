@@ -2,11 +2,12 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+import torch
 from accelerate import Accelerator, DistributedType
 from loguru import logger as eval_logger
 from PIL import Image
 from tqdm import tqdm
-from transformers import AutoModelForVision2Seq, AutoProcessor
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForImageTextToText, AutoModelForVision2Seq, AutoProcessor
 
 from lmms_eval import utils
 from lmms_eval.api.instance import Instance
@@ -29,6 +30,8 @@ class STTVNoVerifier(lmms):
         prompt_path: Optional[str] = None,
         instruction_mode: str = "box",
         max_image_side: int = 768,
+        no_verifier_max_new_tokens: int = 768,
+        torch_dtype: Optional[Union[str, torch.dtype]] = "auto",
         trust_remote_code: Optional[bool] = True,
         **kwargs,
     ) -> None:
@@ -43,11 +46,35 @@ class STTVNoVerifier(lmms):
         else:
             self.device_map = device_map
 
-        self._model = AutoModelForVision2Seq.from_pretrained(
-            pretrained,
-            device_map=self.device_map,
-            trust_remote_code=trust_remote_code,
-        ).eval()
+        config = AutoConfig.from_pretrained(pretrained, trust_remote_code=trust_remote_code)
+        if config.model_type in AutoModelForVision2Seq._model_mapping.keys():
+            model_cls = AutoModelForVision2Seq
+        elif config.model_type in AutoModelForImageTextToText._model_mapping.keys():
+            model_cls = AutoModelForImageTextToText
+        elif config.model_type in AutoModelForCausalLM._model_mapping.keys():
+            model_cls = AutoModelForCausalLM
+        else:
+            model_cls = AutoModel
+
+        model_kwargs: Dict[str, object] = {
+            "device_map": self.device_map,
+            "trust_remote_code": trust_remote_code,
+        }
+        normalized_dtype = torch_dtype
+        if isinstance(torch_dtype, str):
+            key = torch_dtype.strip().lower()
+            if key in {"", "none", "auto"}:
+                normalized_dtype = "auto"
+            elif key in {"bf16", "bfloat16"}:
+                normalized_dtype = torch.bfloat16
+            elif key in {"fp16", "float16", "half"}:
+                normalized_dtype = torch.float16
+            elif key in {"fp32", "float32"}:
+                normalized_dtype = torch.float32
+        if normalized_dtype is not None:
+            model_kwargs["torch_dtype"] = normalized_dtype
+
+        self._model = model_cls.from_pretrained(pretrained, **model_kwargs).eval()
         self.processor = AutoProcessor.from_pretrained(pretrained, trust_remote_code=trust_remote_code)
         self._tokenizer = self.processor.tokenizer
         if self._tokenizer is None:
@@ -58,6 +85,7 @@ class STTVNoVerifier(lmms):
         self._max_length = 2048
         self.batch_size_per_gpu = int(batch_size)
         self.max_image_side = max_image_side
+        self.no_verifier_max_new_tokens = int(no_verifier_max_new_tokens)
         self.depth_enabled = self._coerce_bool(depth)
         normalized_mode = instruction_mode.lower()
         if normalized_mode != "box":
@@ -223,7 +251,7 @@ class STTVNoVerifier(lmms):
         )
         inputs = inputs.to(self.model.device)
 
-        cont = self.model.generate(**inputs, max_new_tokens=512)
+        cont = self.model.generate(**inputs, max_new_tokens=self.no_verifier_max_new_tokens)
 
         generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
         answers = self.processor.batch_decode(
