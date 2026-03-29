@@ -47,14 +47,6 @@ class STTVNoVerifier(lmms):
             self.device_map = device_map
 
         config = AutoConfig.from_pretrained(pretrained, trust_remote_code=trust_remote_code)
-        if config.model_type in AutoModelForVision2Seq._model_mapping.keys():
-            model_cls = AutoModelForVision2Seq
-        elif config.model_type in AutoModelForImageTextToText._model_mapping.keys():
-            model_cls = AutoModelForImageTextToText
-        elif config.model_type in AutoModelForCausalLM._model_mapping.keys():
-            model_cls = AutoModelForCausalLM
-        else:
-            model_cls = AutoModel
 
         model_kwargs: Dict[str, object] = {
             "device_map": self.device_map,
@@ -74,7 +66,48 @@ class STTVNoVerifier(lmms):
         if normalized_dtype is not None:
             model_kwargs["torch_dtype"] = normalized_dtype
 
-        self._model = model_cls.from_pretrained(pretrained, **model_kwargs).eval()
+        # Molmo2 model card uses AutoModelForImageTextToText explicitly.
+        if "molmo2" in pretrained.lower():
+            molmo_kwargs: Dict[str, object] = {
+                "device_map": self.device_map,
+                "trust_remote_code": trust_remote_code,
+                "dtype": "auto",
+            }
+            if isinstance(torch_dtype, str):
+                key = torch_dtype.strip().lower()
+                if key in {"bf16", "bfloat16"}:
+                    molmo_kwargs["dtype"] = "bfloat16"
+                elif key in {"fp16", "float16", "half"}:
+                    molmo_kwargs["dtype"] = "float16"
+                elif key in {"fp32", "float32"}:
+                    molmo_kwargs["dtype"] = "float32"
+                elif key in {"auto", "", "none"}:
+                    molmo_kwargs["dtype"] = "auto"
+            self._model = AutoModelForImageTextToText.from_pretrained(pretrained, **molmo_kwargs).eval()
+            eval_logger.info(
+                f"Loaded {pretrained} with AutoModelForImageTextToText "
+                f"(model_type={getattr(config, 'model_type', 'unknown')})"
+            )
+        else:
+            # Generic fallback for non-Molmo architectures.
+            load_errors: List[str] = []
+            self._model = None
+            for model_cls in (AutoModelForVision2Seq, AutoModelForImageTextToText, AutoModelForCausalLM, AutoModel):
+                try:
+                    self._model = model_cls.from_pretrained(pretrained, **model_kwargs).eval()
+                    eval_logger.info(
+                        f"Loaded {pretrained} with {model_cls.__name__} "
+                        f"(model_type={getattr(config, 'model_type', 'unknown')})"
+                    )
+                    break
+                except Exception as exc:  # pragma: no cover - model-specific fallback path
+                    load_errors.append(f"{model_cls.__name__}: {type(exc).__name__}: {exc}")
+            if self._model is None:
+                error_summary = " | ".join(load_errors)
+                raise RuntimeError(
+                    f"Failed to load model '{pretrained}' with available auto classes. "
+                    f"Tried Vision2Seq/ImageTextToText/CausalLM/AutoModel. Errors: {error_summary}"
+                )
         self.processor = AutoProcessor.from_pretrained(pretrained, trust_remote_code=trust_remote_code)
         self._tokenizer = self.processor.tokenizer
         if self._tokenizer is None:
