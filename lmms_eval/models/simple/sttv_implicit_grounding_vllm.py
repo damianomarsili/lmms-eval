@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from tqdm import tqdm
 
@@ -206,6 +206,7 @@ class STTVImplicitGroundingVLLM(STTVNoVerifierVLLM):
         re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
         chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
         self.last_generation_metadata = None
+        all_generation_metadata: List[Dict[str, object]] = []
         for chunk in chunks:
             contexts, all_gen_kwargs, doc_to_visual, doc_id, task, split = zip(*chunk)
             if isinstance(contexts, tuple):
@@ -234,8 +235,20 @@ class STTVImplicitGroundingVLLM(STTVNoVerifierVLLM):
                     stop_sequences=["</answer>"],
                     max_new_tokens=max(1, self.generation_chunk_max_new_tokens),
                 )
+                generation_metadata: Dict[str, object] = {
+                    "requested_logic_verifier_rounds": int(self.logic_verifier_rounds),
+                    "performed_logic_verifier_rounds": 0,
+                    "initial_answer_draft": current_answer_output,
+                    "logic_verifier_rounds": [],
+                }
+                logic_round_records = generation_metadata["logic_verifier_rounds"]
+                assert isinstance(logic_round_records, list)
 
-                for _ in range(self.logic_verifier_rounds):
+                for round_index in range(1, self.logic_verifier_rounds + 1):
+                    round_record: Dict[str, object] = {
+                        "round_index": round_index,
+                        "answer_before_feedback": current_answer_output,
+                    }
                     logic_prompt = self._build_logic_self_verifier_prompt(context, current_answer_output)
                     logic_messages = self._build_messages(logic_prompt, visuals)
                     logic_output, _ = self._generate_once(
@@ -243,11 +256,17 @@ class STTVImplicitGroundingVLLM(STTVNoVerifierVLLM):
                         sample_gen_kwargs,
                         max_new_tokens=max(1, self.logic_verifier_max_new_tokens),
                     )
+                    round_record["self_verifier_feedback_raw"] = logic_output
                     logic_feedback, logic_parse_valid = self._parse_logic_step_edits_optional(
                         logic_output, current_answer_output
                     )
+                    round_record["self_verifier_feedback_parse_valid"] = bool(logic_parse_valid)
+                    round_record["self_verifier_feedback_parsed"] = logic_feedback
+                    fallback_used = False
                     if (not logic_parse_valid) or (not str(logic_feedback or "").strip()):
                         logic_feedback = "No valid self-verifier feedback was produced. Re-emit the current answer unchanged."
+                        fallback_used = True
+                    round_record["self_verifier_feedback_fallback_used"] = fallback_used
 
                     rewrite_prompt = self._build_answer_rewrite_prompt(context, current_answer_output, logic_feedback)
                     rewrite_messages = self._build_messages(rewrite_prompt, visuals)
@@ -257,12 +276,19 @@ class STTVImplicitGroundingVLLM(STTVNoVerifierVLLM):
                         stop_sequences=["</answer>"],
                         max_new_tokens=max(1, self.generation_chunk_max_new_tokens),
                     )
+                    round_record["answer_after_rewrite"] = current_answer_output
+                    logic_round_records.append(round_record)
+
+                generation_metadata["performed_logic_verifier_rounds"] = len(logic_round_records)
+                generation_metadata["final_answer_output"] = current_answer_output
 
                 res.append(current_answer_output)
+                all_generation_metadata.append(generation_metadata)
                 self.cache_hook.add_partial("generate_until", (context, sample_gen_kwargs), current_answer_output)
                 pbar.update(1)
                 self._cleanup_after_sample()
 
         res = re_ords.get_original(res)
+        self.last_generation_metadata = re_ords.get_original(all_generation_metadata)
         pbar.close()
         return res
