@@ -38,6 +38,8 @@ class Qwen3VL(lmms):
         **kwargs,
     ) -> None:
         super().__init__()
+        if "answer_only_format" in kwargs:
+            answer_only_format = kwargs.pop("answer_only_format")
         assert kwargs == {}, f"Unexpected kwargs: {kwargs}"
 
         accelerator = Accelerator()
