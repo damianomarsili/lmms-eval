@@ -24,6 +24,7 @@ class Qwen3VL(lmms):
         batch_size: Optional[Union[int, str]] = 1,
         max_image_side: int = 768,
         trust_remote_code: Optional[bool] = True,
+        answer_only_format: Union[bool, str, int] = False,
         self_consistency_k: int = 1,
         self_consistency_temperature: float = 0.7,
         self_consistency_top_p: float = 0.95,
@@ -61,6 +62,7 @@ class Qwen3VL(lmms):
         self._max_length = 2048
         self.batch_size_per_gpu = int(batch_size)
         self.max_image_side = max_image_side
+        self.answer_only_format = str(answer_only_format).strip().lower() in {"1", "true", "yes", "on"}
         self.self_consistency_k = max(1, int(self_consistency_k))
         self.self_consistency_temperature = float(self_consistency_temperature)
         self.self_consistency_top_p = float(self_consistency_top_p)
@@ -284,6 +286,16 @@ class Qwen3VL(lmms):
             cleaned = answer_blocks[-1].strip()
         return " ".join(cleaned.lower().split())
 
+    def _build_answer_only_context(self, query: str) -> str:
+        query_text = str(query or "").strip()
+        return (
+            f"{query_text}\n\n"
+            "Please answer the query by first reasoning inside <reason> tags and then putting ONLY your final answer "
+            "inside <answer>. Ensure that the answer is either yes/no, one word, or one number. "
+            "Do not round answers, express all ratios as unrounded decimals. "
+            "Nothing else."
+        )
+
     def _majority_vote_text(self, candidates: List[str]) -> str:
         if len(candidates) == 0:
             return ""
@@ -394,9 +406,10 @@ class Qwen3VL(lmms):
                 contexts = list(contexts)
 
             for i, context in enumerate(contexts):
-                if "<image>" in context:
-                    context = context.replace("<image>", "")
-                messages = self._build_messages(context, visual_list[i])
+                if isinstance(context, str) and "<image" in context:
+                    context = re.sub(r"<image\s*\d*>", "", context).replace("<image>", "")
+                prompted_context = self._build_answer_only_context(context) if self.answer_only_format else context
+                messages = self._build_messages(prompted_context, visual_list[i])
                 sample_kwargs = dict(gen_kwargs)
                 if self.self_consistency_k > 1:
                     temp_value = sample_kwargs.get("temperature", None)
@@ -413,7 +426,7 @@ class Qwen3VL(lmms):
                     for _ in range(self.self_consistency_k)
                 ]
                 if self.self_consistency_selector == "llm_judge" and self.self_consistency_k > 1:
-                    answer = self._llm_judge_select_text(context, candidates)
+                    answer = self._llm_judge_select_text(prompted_context, candidates)
                 else:
                     answer = self._majority_vote_text(candidates)
                 res.append(answer)

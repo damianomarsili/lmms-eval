@@ -5,7 +5,7 @@ import pathlib
 import re
 import time
 from pathlib import Path
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 from accelerate import Accelerator, DistributedType
 from loguru import logger as eval_logger
@@ -234,6 +234,7 @@ class GeminiAPI(lmms):
         response_persistent_folder: str = "./logs/gemini_persistent_folder",
         interleave: bool = False,
         max_image_side: int = 768,
+        answer_only_format: Union[bool, str, int] = False,
         api_key: Optional[str] = None,
         vertexai: bool = False,
         vertex_project: Optional[str] = None,
@@ -258,6 +259,7 @@ class GeminiAPI(lmms):
         self.response_persistent_file = ""
         self.interleave = interleave
         self.max_image_side = int(max_image_side)
+        self.answer_only_format = str(answer_only_format).strip().lower() in {"1", "true", "yes", "on"}
         self.self_consistency_k = max(1, int(self_consistency_k))
         self.self_consistency_temperature = float(self_consistency_temperature)
         self.self_consistency_top_p = float(self_consistency_top_p)
@@ -432,6 +434,16 @@ class GeminiAPI(lmms):
             cleaned = answer_blocks[-1].strip()
         return " ".join(cleaned.lower().split())
 
+    def _build_answer_only_context(self, query: str) -> str:
+        query_text = str(query or "").strip()
+        return (
+            f"{query_text}\n\n"
+            "Please answer the query by first reasoning inside <reason> tags and then putting ONLY your final answer "
+            "inside <answer>. Ensure that the answer is either yes/no, one word, or one number. "
+            "Do not round answers, express all ratios as unrounded decimals. "
+            "Nothing else."
+        )
+
     def _majority_vote_text(self, candidates: List[str]) -> str:
         if len(candidates) == 0:
             return ""
@@ -567,6 +579,10 @@ class GeminiAPI(lmms):
                         pbar.update(1)
                         continue
 
+            if isinstance(contexts, str) and "<image" in contexts:
+                contexts = re.sub(r"<image\s*\d*>", "", contexts).replace("<image>", "")
+            prompted_context = self._build_answer_only_context(contexts) if self.answer_only_format else contexts
+
             if "max_new_tokens" not in gen_kwargs:
                 gen_kwargs["max_new_tokens"] = 1024
             if "temperature" not in gen_kwargs:
@@ -593,7 +609,7 @@ class GeminiAPI(lmms):
             visuals = self.flatten(visuals)
             visuals = self.convert_modality(visuals)
 
-            user_parts = self._build_user_parts(contexts, visuals)
+            user_parts = self._build_user_parts(prompted_context, visuals)
             user_content = None
             if genai_types is not None and hasattr(genai_types, "Content"):
                 user_content = genai_types.Content(role="user", parts=user_parts)
@@ -685,7 +701,7 @@ class GeminiAPI(lmms):
             if len(sample_candidates) <= 1:
                 content = sample_candidates[0] if sample_candidates else ""
             elif self.self_consistency_selector == "llm_judge":
-                content = self._llm_judge_select_text(contexts, sample_candidates)
+                content = self._llm_judge_select_text(prompted_context, sample_candidates)
             else:
                 content = self._majority_vote_text(sample_candidates)
             res.append(content)
