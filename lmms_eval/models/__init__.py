@@ -75,6 +75,7 @@ AVAILABLE_SIMPLE_MODELS = {
     "sttv_no_verifier_vllm": "STTVNoVerifierVLLM",
     "sttv_answer_only_vllm": "STTVAnswerOnlyVLLM",
     "sttv_implicit_grounding_vllm": "STTVImplicitGroundingVLLM",
+    "sttv_implicit_grounding_gemini_verifier_vllm": "STTVImplicitGroundingGeminiVerifierVLLM",
     "sttv_all_verifiers_vllm": "STTVAllVerifiersVLLM",
     "sttv_vllm": "STTVVLLM",
     "smolVLM": "SmolVLM",
