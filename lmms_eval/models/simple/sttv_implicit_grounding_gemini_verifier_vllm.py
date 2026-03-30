@@ -1,6 +1,7 @@
 import re
 import sys
 import time
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -51,10 +52,10 @@ class STTVImplicitGroundingGeminiVerifierVLLM(STTVImplicitGroundingVLLM):
         disable_log_stats: bool = False,
         gemini_model: str = "gemini-3-flash-preview",
         gemini_api_key: Optional[str] = None,
-        gemini_vertexai: Union[bool, str, int, float] = False,
-        gemini_vertex_project: Optional[str] = None,
-        gemini_vertex_location: Optional[str] = None,
-        gemini_service_account_file: Optional[str] = None,
+        gemini_vertexai: Union[bool, str, int, float] = True,
+        gemini_vertex_project: Optional[str] = "damiano-gcp",
+        gemini_vertex_location: Optional[str] = "global",
+        gemini_service_account_file: Optional[str] = "/data/damiano/code/STTV/gemini_login.json",
         gemini_http_api_version: Optional[str] = None,
         gemini_timeout_s: int = 180,
         gemini_max_retries: int = 5,
@@ -68,7 +69,7 @@ class STTVImplicitGroundingGeminiVerifierVLLM(STTVImplicitGroundingVLLM):
         gemini_debug_print_io: Union[bool, str, int, float] = False,
         gemini_logic_teacher_prompt_path: Optional[str] = None,
         **kwargs,
-    ) -> None:
+        ) -> None:
         super().__init__(
             model=model,
             tensor_parallel_size=tensor_parallel_size,
@@ -89,13 +90,20 @@ class STTVImplicitGroundingGeminiVerifierVLLM(STTVImplicitGroundingVLLM):
             disable_log_stats=disable_log_stats,
             **kwargs,
         )
+        resolved_service_account_file = (
+            str(gemini_service_account_file).strip()
+            if gemini_service_account_file is not None and str(gemini_service_account_file).strip()
+            else os.getenv("GEMINI_SERVICE_ACCOUNT_FILE")
+            or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            or str(REPO_ROOT / "gemini_login.json")
+        )
         runtime_kwargs = {
             "gemini_model": gemini_model,
             "gemini_api_key": gemini_api_key,
             "gemini_vertexai": self._coerce_bool(gemini_vertexai),
             "gemini_vertex_project": gemini_vertex_project,
             "gemini_vertex_location": gemini_vertex_location,
-            "gemini_service_account_file": gemini_service_account_file,
+            "gemini_service_account_file": resolved_service_account_file,
             "gemini_http_api_version": gemini_http_api_version,
             "gemini_timeout_s": gemini_timeout_s,
             "gemini_max_retries": gemini_max_retries,
