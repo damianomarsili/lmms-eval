@@ -320,6 +320,7 @@ class OpenAICompatible(lmms):
             pbar.update(1)
 
         pbar.close()
+        res = re_ords.get_original(res)
         return res
 
     def generate_until_multi_round(self, requests) -> List[str]:

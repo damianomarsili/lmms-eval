@@ -248,6 +248,7 @@ class GeminiAPI(lmms):
         self_consistency_judge_max_new_tokens: int = 64,
         self_consistency_judge_temperature: float = 0.0,
         self_consistency_judge_top_p: float = 1.0,
+        max_new_tokens: Optional[int] = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -255,7 +256,7 @@ class GeminiAPI(lmms):
 
         self.model_version = model_version
         self.timeout = timeout
-        self.continual_mode = continual_mode
+        self.continual_mode = str(continual_mode).strip().lower() in {"1", "true", "yes", "on"}
         self.response_persistent_file = ""
         self.interleave = interleave
         self.max_image_side = int(max_image_side)
@@ -274,6 +275,7 @@ class GeminiAPI(lmms):
         self.self_consistency_judge_max_new_tokens = max(8, int(self_consistency_judge_max_new_tokens))
         self.self_consistency_judge_temperature = float(self_consistency_judge_temperature)
         self.self_consistency_judge_top_p = float(self_consistency_judge_top_p)
+        self.max_new_tokens = int(max_new_tokens) if max_new_tokens is not None else None
 
         self.client = _create_genai_client(
             api_key=api_key,
@@ -444,6 +446,62 @@ class GeminiAPI(lmms):
             "Nothing else."
         )
 
+    def _is_cv_bench_task(self, task_name: Any) -> bool:
+        task = str(task_name or "").strip().lower().replace("_", "-")
+        return task in {"cv-bench", "cvbench"}
+
+    def _extract_cv_bench_label(self, response_text: str, query_text: str) -> Optional[str]:
+        text = str(response_text or "")
+        valid_labels = set("ABCDEF")
+
+        patterns = [
+            r"[\(\[]\s*([A-Fa-f])\s*[\)\]]",  # (C) / [C]
+            r"(?i)\b(?:answer|ans|choice|option|prediction|pred|output)\s*[:\-]?\s*[\(\[]?\s*([A-Fa-f])\s*[\)\]]?",
+            r"^\s*([A-Fa-f])\s*[\)\].:]",  # C) / C. / C:
+            r"^\s*([A-Fa-f])\s*$",  # plain "C"
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+            if match:
+                label = match.group(1).upper()
+                if label in valid_labels:
+                    return label
+
+        # Fallback: map textual answer back to options in the prompt.
+        choices = re.findall(r"\(([A-Fa-f])\)\s*([^\n]+)", str(query_text or ""))
+        if not choices:
+            return None
+
+        normalized_text = " ".join(text.strip().lower().split())
+        option_map: dict[str, str] = {label.upper(): option.strip().lower() for label, option in choices}
+
+        hits = [label for label, option in option_map.items() if option and option in normalized_text]
+        if len(hits) == 1:
+            return hits[0]
+
+        numbers = re.findall(r"-?\d+(?:\.\d+)?", text)
+        if numbers:
+            last_number = numbers[-1]
+            numeric_hits = [label for label, option in option_map.items() if option == last_number]
+            if len(numeric_hits) == 1:
+                return numeric_hits[0]
+
+        return None
+
+    def _maybe_format_cv_bench_answer_only(self, content: str, query_text: str, task_name: Any) -> str:
+        if not self.answer_only_format or not self._is_cv_bench_task(task_name):
+            return content
+        if re.search(r"(?is)<answer>\s*.*?</answer>", str(content or "")):
+            return content
+
+        label = self._extract_cv_bench_label(str(content or ""), query_text)
+        if label is None:
+            return content
+        base = str(content or "").rstrip()
+        if base:
+            return f"{base}\n<answer>{label}</answer>"
+        return f"<answer>{label}</answer>"
+
     def _majority_vote_text(self, candidates: List[str]) -> str:
         if len(candidates) == 0:
             return ""
@@ -583,7 +641,9 @@ class GeminiAPI(lmms):
                 contexts = re.sub(r"<image\s*\d*>", "", contexts).replace("<image>", "")
             prompted_context = self._build_answer_only_context(contexts) if self.answer_only_format else contexts
 
-            if "max_new_tokens" not in gen_kwargs:
+            if self.max_new_tokens is not None:
+                gen_kwargs["max_new_tokens"] = self.max_new_tokens
+            elif "max_new_tokens" not in gen_kwargs:
                 gen_kwargs["max_new_tokens"] = 1024
             if "temperature" not in gen_kwargs:
                 gen_kwargs["temperature"] = 0
@@ -704,6 +764,7 @@ class GeminiAPI(lmms):
                 content = self._llm_judge_select_text(prompted_context, sample_candidates)
             else:
                 content = self._majority_vote_text(sample_candidates)
+            content = self._maybe_format_cv_bench_answer_only(content, prompted_context, task)
             res.append(content)
             pbar.update(1)
 

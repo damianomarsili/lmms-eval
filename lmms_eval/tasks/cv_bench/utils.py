@@ -27,14 +27,15 @@ def _strip_think_prefix(text: Optional[str]) -> Optional[str]:
 
 def _extract_answer_tag_text(text: Optional[str]) -> Optional[str]:
     """
-    Extract only the final answer payload from <answer>...</answer>.
-    If tags are missing, return None (no fallback to free text).
+    Extract the final answer payload from <answer>...</answer>.
+    If tags are missing, fall back to the raw response text.
     """
     if not isinstance(text, str):
         return None
     matches = re.findall(r"(?is)<answer>\s*(.*?)\s*</answer>", text)
     if not matches:
-        return None
+        fallback = text.strip()
+        return fallback if fallback else None
     return matches[-1].strip()
 
 def doc_to_visual(doc):
