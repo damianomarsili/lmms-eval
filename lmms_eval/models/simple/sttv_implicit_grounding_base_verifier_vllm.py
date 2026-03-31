@@ -53,6 +53,7 @@ class STTVImplicitGroundingBaseVerifierVLLM(STTVImplicitGroundingVLLM):
         verifier_disable_log_stats: Optional[bool] = None,
         verifier_max_model_len: Optional[int] = 8192,
         verifier_dtype: Optional[str] = None,
+        logic_verifier_answer_max_chars: int = 4000,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -104,6 +105,21 @@ class STTVImplicitGroundingBaseVerifierVLLM(STTVImplicitGroundingVLLM):
             seed=verifier_seed_value,
             **verifier_kwargs,
         )
+        self.logic_verifier_answer_max_chars = max(0, int(logic_verifier_answer_max_chars))
+
+    def _truncate_answer_for_logic_verifier(self, answer_output: str) -> tuple[str, bool]:
+        text = str(answer_output or "").strip()
+        limit = self.logic_verifier_answer_max_chars
+        if limit <= 0 or len(text) <= limit:
+            return text, False
+        marker = "\n...[truncated for verifier]...\n"
+        keep_head = max(0, int(limit * 0.7))
+        keep_tail = max(0, limit - keep_head - len(marker))
+        if keep_tail <= 0:
+            truncated = text[: max(0, limit - len(marker))] + marker
+        else:
+            truncated = text[:keep_head] + marker + text[-keep_tail:]
+        return truncated, True
 
     def _generate_once_with_verifier_client(
         self,
@@ -207,7 +223,11 @@ class STTVImplicitGroundingBaseVerifierVLLM(STTVImplicitGroundingVLLM):
                         "feedback_source": "base_model_verifier",
                         "feedback_model": self.verifier_model_name,
                     }
-                    logic_prompt = self._build_logic_self_verifier_prompt(context, current_answer_output)
+                    verifier_answer_input, answer_was_truncated = self._truncate_answer_for_logic_verifier(current_answer_output)
+                    round_record["logic_verifier_input_answer_truncated"] = bool(answer_was_truncated)
+                    round_record["logic_verifier_input_answer_char_len"] = len(str(current_answer_output or ""))
+                    round_record["logic_verifier_input_answer_char_len_used"] = len(verifier_answer_input)
+                    logic_prompt = self._build_logic_self_verifier_prompt(context, verifier_answer_input)
                     logic_messages = self._build_messages(logic_prompt, visuals)
                     logic_output, _ = self._generate_once_with_verifier_client(
                         logic_messages,
