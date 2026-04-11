@@ -254,6 +254,27 @@ class MathVistaEvaluator:
             except re.error:
                 pass
 
+            # Stay fully local in quick mode: do not call external judge APIs.
+            # Try a few lightweight patterns, then fall back to raw response.
+            if question_type == "multi_choice":
+                # e.g. "(A) ...", "Answer: B", "option C", or bare "D"
+                for pattern in [
+                    r"\(([A-Za-z])\)",
+                    r"\banswer\s*[:\-]?\s*([A-Za-z])\b",
+                    r"\boption(?:\s+is)?\s*([A-Za-z])\b",
+                    r"^\s*([A-Za-z])\s*$",
+                ]:
+                    letter = re.search(pattern, response, flags=re.IGNORECASE)
+                    if letter:
+                        return letter.group(1).upper()
+
+            if answer_type in {"integer", "float"}:
+                nums = re.findall(r"[-+]?\d*\.?\d+", response)
+                if nums:
+                    return nums[-1]
+
+            return response.strip()
+
         # general extraction
         try:
             full_prompt = self.create_test_prompt(DEMO_PROMPT, query, response)
