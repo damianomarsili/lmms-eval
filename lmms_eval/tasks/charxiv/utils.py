@@ -53,7 +53,9 @@ def charxiv_descriptive_process_docs(dataset: Dataset) -> Dataset:
         example[f"descriptive_a"] = example[f"descriptive_a{q_number}"]
         return {"qid": qid, **example}
 
-    dataset = dataset.map(_process_row, with_indices=True, num_proc=1)
+    # Keep preprocessing in-process to avoid multiprocessing pickling issues
+    # with task module state (e.g., API clients carrying SSL contexts).
+    dataset = dataset.map(_process_row, with_indices=True)
     return dataset
 
 
