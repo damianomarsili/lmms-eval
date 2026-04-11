@@ -4,4 +4,4 @@ task:
   - mathvista_test
 metadata:
   version: 0.0
-  quick_extract: false
+  quick_extract: true

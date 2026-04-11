@@ -159,6 +159,7 @@ class VLLM(lmms):
         **kwargs,
     ) -> None:
         super().__init__()
+
         # Manually set a image token for GPT4V so that we can search for it
         # and split the text and image
         # Here we just use the same token as llava for convenient
@@ -168,7 +169,7 @@ class VLLM(lmms):
         self.min_image_pixels = min_image_pixels
         self.data_parallel_size = data_parallel_size
         # Qwen 2/2.5-VL models enforce minimum image dimensions
-        self._enforce_image_resize = self._is_qwen_vl_model(model)
+        self._enforce_image_resize = self._is_qwen_vl_model(self.model)
 
         # Load chat template during initialization
         self.chat_template = None
