@@ -1,0 +1,28 @@
+dataset_path: LibraTree/geomverse
+dataset_kwargs:
+  token: false
+task: "geomverse"
+test_split: test
+output_type: generate_until
+doc_to_visual: !function utils.geomverse_doc_to_visual
+doc_to_text: !function utils.geomverse_doc_to_text
+doc_to_target: "answer"
+process_results: !function utils.geomverse_process_results
+
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: ""
+    post_prompt: "\nAnswer with only the final numeric value."
+
+generation_kwargs:
+  max_new_tokens: 32
+  temperature: 0
+  do_sample: false
+
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+
+metadata:
+  - version: 0.0
