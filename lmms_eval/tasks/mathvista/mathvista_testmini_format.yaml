@@ -8,7 +8,7 @@ doc_to_visual: !function utils.mathvista_doc_to_visual
 doc_to_text: !function utils.mathvista_doc_to_text
 doc_to_target: "answer"
 generation_kwargs:
-  max_new_tokens: 16384
+  max_new_tokens: 65536
 process_results: !function utils.mathvista_process_results
 metric_list:
   - metric: llm_as_judge_eval

@@ -15,7 +15,7 @@ lmms_eval_specific_kwargs:
     post_prompt: "\nRespond with exactly one tag pair in this format and nothing else: <answer>FINAL_NUMERIC_VALUE</answer>."
 
 generation_kwargs:
-  max_new_tokens: 2048
+  max_new_tokens: 65536
   temperature: 0
   do_sample: false
 
