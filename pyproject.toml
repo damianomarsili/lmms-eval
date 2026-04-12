@@ -57,6 +57,7 @@ dependencies = [
     "pyyaml",
     "sympy",
     "latex2sympy2",
+    "math-verify>=0.9.0",
     "mpmath",
     "Jinja2",
     "openpyxl",

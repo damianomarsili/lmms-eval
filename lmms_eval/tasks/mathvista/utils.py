@@ -50,7 +50,7 @@ def mathvista_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
 
 def mathvista_process_results(doc, results):
-    prediction = results[0].strip()
+    raw_prediction = results[0].strip()
     problem = {
         "question_type": doc["question_type"],
         "answer_type": doc["answer_type"],
@@ -59,11 +59,10 @@ def mathvista_process_results(doc, results):
         "answer": doc["answer"] if "answer" in doc else None,
         "precision": doc["precision"] if "precision" in doc else 0,
     }
-    extraction = mathvista_evaluator.extract_answer(prediction, problem, config["metadata"]["quick_extract"])
+    extraction = mathvista_evaluator.extract_answer(raw_prediction, problem, config["metadata"]["quick_extract"])
 
     prediction = mathvista_evaluator.normalize_extracted_answer(extraction, problem["choices"], problem["question_type"], problem["answer_type"], problem["precision"])
-    # set test set answer to None
-    true_false = mathvista_evaluator.safe_equal(prediction, problem["answer"]) if problem["answer"] is not None else False
+    true_false = mathvista_evaluator.verify_answer_with_math_verify(raw_prediction, problem)
 
     result = {
         "question_id": doc["pid"],

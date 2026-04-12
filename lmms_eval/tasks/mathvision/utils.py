@@ -1,14 +1,23 @@
 import json
 import os
+import re
 import time
 from pathlib import Path
 
 import pandas as pd
 import requests
 import yaml
+from latex2sympy2_extended.latex2sympy2 import NormalizationConfig
 from loguru import logger as eval_logger
 
 from lmms_eval.llm_judge import ServerConfig, get_server
+from lmms_eval.tasks._task_utils.math_verify_utils import (
+    ExprExtractionConfig,
+    LatexExtractionConfig,
+    StringExtractionConfig,
+    parse,
+    verify,
+)
 
 try:
     from lmms_eval.tasks.mathvision.eval_utils import (
@@ -21,6 +30,19 @@ except ImportError as e:
     pass
 
 NUM_SECONDS_TO_SLEEP = 5
+_ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.IGNORECASE | re.DOTALL)
+_MATH_NORM_CONFIG = NormalizationConfig(
+    basic_latex=True,
+    units=True,
+    malformed_operators=True,
+    nits=True,
+    boxed="all",
+    equations=False,
+)
+_MATH_EXTRACT_CONFIG = [
+    LatexExtractionConfig(boxed_match_priority=0, normalization_config=_MATH_NORM_CONFIG),
+    ExprExtractionConfig(try_extract_without_anchor=True),
+]
 
 # Initialize the judge server
 API_TYPE = os.getenv("API_TYPE", "openai")
@@ -83,52 +105,44 @@ def mathvision_gpt_eval_process_results(doc, results):
 
 
 def mathvision_process_results(doc, results):
+    def extract_answer_tag_content(text):
+        match = _ANSWER_TAG_RE.search(str(text))
+        if match is None:
+            return None
+        return match.group(1).strip()
+
+    def parse_math(text):
+        return parse(
+            str(text),
+            extraction_config=_MATH_EXTRACT_CONFIG,
+            extraction_mode="any_match",
+            fallback_mode="first_match",
+        )
+
+    def parse_choice(text, options):
+        option_letters = tuple(chr(ord("A") + i) for i in range(len(options)))
+        return parse(
+            str(text),
+            extraction_config=[StringExtractionConfig(strings=option_letters, try_extract_without_anchor=True, lowercase=False)],
+            extraction_mode="first_match",
+            fallback_mode="no_fallback",
+        )
+
     correct_list = []
     for pred in results:
-        model_answer = pred.strip()
+        prediction_text = extract_answer_tag_content(pred)
+        if prediction_text is None:
+            prediction_text = pred.strip()
 
-        gt_answer = str(doc["answer"])
+        gt_answer = str(doc["answer"]).strip()
         if len(doc["options"]) > 0:
-            gt_answer_value = doc["options"][ord(gt_answer) - ord("A")]
+            pred_parsed = parse_choice(prediction_text, doc["options"])
+            gold_parsed = parse_choice(gt_answer, doc["options"])
         else:
-            gt_answer_value = ""
+            pred_parsed = parse_math(prediction_text)
+            gold_parsed = parse_math(gt_answer)
 
-        for c in "ABCDE":
-            if model_answer.endswith(f" {c}.") or model_answer.endswith(f" ({c}).") or model_answer.startswith(f"{c}\n") or model_answer.startswith(f"({c})\n") or model_answer.startswith(f"({c}) {c}\n"):
-                model_answer = c
-        if is_number(model_answer.split("is ")[-1].rstrip(".")):
-            model_answer = model_answer.split("is ")[-1].rstrip(".")
-        if "oxed{" not in model_answer:
-            for flag in ["the final answer is", "the answer is", "the correct answer is", "the answer should be"]:
-                raw_model_answer = model_answer
-                model_answer = model_answer.split(flag)[-1].strip()
-                if flag in raw_model_answer:
-                    model_answer = model_answer.split("\n")[0].split(". ")[0]
-                flag = flag.replace("the", "The")
-                raw_model_answer = model_answer
-                model_answer = model_answer.split(flag)[-1].strip()
-                if flag in raw_model_answer:
-                    model_answer = model_answer.split("\n")[0].split(". ")[0]
-        elif model_answer.count("oxed{") > 1:
-            model_answer = "\\boxed{" + model_answer.split("oxed{")[-1]
-
-        model_answer = (
-            find_math_answer(model_answer)
-            .replace("(a)", "a")
-            .replace("(b)", "b")
-            .replace("(c)", "c")
-            .replace("(d)", "d")
-            .replace("(e)", "e")
-            .replace("{a}", "a")
-            .replace("{b}", "b")
-            .replace("{c}", "c")
-            .replace("{d}", "d")
-            .replace("{e}", "e")
-            .rstrip(".")
-            .lstrip(":")
-            .strip()
-        )
-        correct = is_equal(gt_answer, model_answer) or is_equal(gt_answer_value, model_answer)
+        correct = len(pred_parsed) > 0 and len(gold_parsed) > 0 and verify(gold_parsed, pred_parsed, strict=True)
         correct_list.append(correct)
     return {
         "mathvision_standard_eval": {

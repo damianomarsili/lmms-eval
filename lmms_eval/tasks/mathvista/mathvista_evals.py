@@ -6,9 +6,17 @@ from pathlib import Path
 import requests
 import yaml
 from Levenshtein import distance
+from latex2sympy2_extended.latex2sympy2 import NormalizationConfig
 from loguru import logger as eval_logger
 
 from lmms_eval.llm_judge import Request, ServerConfig, get_server
+from lmms_eval.tasks._task_utils.math_verify_utils import (
+    ExprExtractionConfig,
+    LatexExtractionConfig,
+    StringExtractionConfig,
+    parse,
+    verify,
+)
 
 # pids: 799, 681, 615
 shot_examples = [
@@ -216,75 +224,109 @@ class MathVistaEvaluator:
         full_prompt = f"{demo_prompt}\n\n{test_prompt}\n\nExtracted answer: "
         return full_prompt
 
+    def _extract_answer_tag_content(self, text):
+        match = re.search(r"<answer>\s*(.*?)\s*</answer>", str(text), flags=re.IGNORECASE | re.DOTALL)
+        if match is None:
+            return None
+        return match.group(1).strip()
+
+    def _parse_math_expression(self, text):
+        math_norm_config = NormalizationConfig(
+            basic_latex=True,
+            units=True,
+            malformed_operators=True,
+            nits=True,
+            boxed="all",
+            equations=False,
+        )
+        return parse(
+            str(text),
+            extraction_config=[
+                LatexExtractionConfig(boxed_match_priority=0, normalization_config=math_norm_config),
+                ExprExtractionConfig(try_extract_without_anchor=True),
+            ],
+            extraction_mode="any_match",
+            fallback_mode="first_match",
+        )
+
+    def _parse_choice_letter(self, text, num_choices):
+        option_letters = tuple(chr(ord("A") + i) for i in range(num_choices))
+        parsed = parse(
+            str(text),
+            extraction_config=[StringExtractionConfig(strings=option_letters, try_extract_without_anchor=True, lowercase=False)],
+            extraction_mode="first_match",
+            fallback_mode="no_fallback",
+        )
+        if len(parsed) == 0:
+            return ""
+        for item in parsed:
+            if isinstance(item, str):
+                candidate = item.strip().upper()
+                if candidate in option_letters:
+                    return candidate
+        return str(parsed[0]).strip().upper()
+
+    def _parse_choice_letter_raw(self, text, num_choices):
+        option_letters = tuple(chr(ord("A") + i) for i in range(num_choices))
+        return parse(
+            str(text),
+            extraction_config=[StringExtractionConfig(strings=option_letters, try_extract_without_anchor=True, lowercase=False)],
+            extraction_mode="first_match",
+            fallback_mode="no_fallback",
+        )
+
+    def _first_parsed_string(self, parsed):
+        if len(parsed) == 0:
+            return ""
+        for item in parsed:
+            if isinstance(item, str):
+                return item.strip()
+        return str(parsed[0]).strip()
+
+    def verify_answer_with_math_verify(self, response, problem):
+        if problem.get("answer", None) is None:
+            return False
+
+        question_type = problem["question_type"]
+        choices = problem.get("choices", [])
+
+        response_text = self._extract_answer_tag_content(response)
+        if response_text is None:
+            response_text = response
+
+        if question_type == "multi_choice":
+            pred_parsed = self._parse_choice_letter_raw(response_text, len(choices))
+            answer = str(problem["answer"]).strip()
+            option_letters = [chr(ord("A") + i) for i in range(len(choices))]
+            if answer in choices:
+                answer = option_letters[choices.index(answer)]
+            gold_parsed = self._parse_choice_letter_raw(answer, len(choices))
+        else:
+            pred_parsed = self._parse_math_expression(response_text)
+            gold_parsed = self._parse_math_expression(str(problem["answer"]))
+
+        if len(pred_parsed) == 0 or len(gold_parsed) == 0:
+            return False
+        return bool(verify(gold_parsed, pred_parsed, strict=True))
+
     def extract_answer(self, response, problem, quick_extract=False):
         question_type = problem["question_type"]
-        answer_type = problem["answer_type"]
         choices = problem.get("choices", [])
-        query = problem["query"]
 
         if not response:
             return ""
 
-        if question_type == "multi_choice" and response in choices:
-            return response
+        response_text = self._extract_answer_tag_content(response)
+        if response_text is None:
+            response_text = response
 
-        if answer_type == "integer":
-            try:
-                extraction = int(response)
-                return str(extraction)
-            except ValueError:
-                pass
+        if question_type == "multi_choice":
+            extraction = self._parse_choice_letter(response_text, len(choices))
+            return extraction if extraction != "" else str(response).strip()
 
-        if answer_type == "float":
-            try:
-                extraction = str(float(response))
-                return extraction
-            except ValueError:
-                pass
-
-        # quick extraction
-        if quick_extract:
-            eval_logger.info("Quickly extracting answer...")
-            # The answer is "text". -> "text"
-            try:
-                result = re.search(r'The answer is "(.*)"\.', response)
-                if result:
-                    extraction = result.group(1)
-                    return extraction
-            except re.error:
-                pass
-
-            # Stay fully local in quick mode: do not call external judge APIs.
-            # Try a few lightweight patterns, then fall back to raw response.
-            if question_type == "multi_choice":
-                # e.g. "(A) ...", "Answer: B", "option C", or bare "D"
-                for pattern in [
-                    r"\(([A-Za-z])\)",
-                    r"\banswer\s*[:\-]?\s*([A-Za-z])\b",
-                    r"\boption(?:\s+is)?\s*([A-Za-z])\b",
-                    r"^\s*([A-Za-z])\s*$",
-                ]:
-                    letter = re.search(pattern, response, flags=re.IGNORECASE)
-                    if letter:
-                        return letter.group(1).upper()
-
-            if answer_type in {"integer", "float"}:
-                nums = re.findall(r"[-+]?\d*\.?\d+", response)
-                if nums:
-                    return nums[-1]
-
-            return response.strip()
-
-        # general extraction
-        try:
-            full_prompt = self.create_test_prompt(DEMO_PROMPT, query, response)
-            extraction = self.get_chat_response(full_prompt, temperature=0, max_tokens=256, n=1)
-            return extraction
-        except Exception as e:
-            eval_logger.error(e)
-            eval_logger.error(f"Error in extracting answer for problem")
-
-        return ""
+        parsed = self._parse_math_expression(response_text)
+        extraction = self._first_parsed_string(parsed)
+        return extraction if extraction != "" else str(response).strip()
 
     def get_most_similar(self, prediction, choices):
         """

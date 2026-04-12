@@ -1,17 +1,15 @@
 import re
 
 from huggingface_hub import hf_hub_download
+from lmms_eval.tasks._task_utils.math_verify_utils import (
+    ExprExtractionConfig,
+    parse,
+    verify,
+)
 from PIL import Image
 
-_NUMBER_RE = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.IGNORECASE | re.DOTALL)
-
-
-def _extract_number(text):
-    match = _NUMBER_RE.search(str(text).replace(",", ""))
-    if match is None:
-        return None
-    return float(match.group(0))
+_MATH_EXTRACT_CONFIG = [ExprExtractionConfig(try_extract_without_anchor=True)]
 
 
 def _extract_answer_tag_content(text):
@@ -19,6 +17,15 @@ def _extract_answer_tag_content(text):
     if match is None:
         return None
     return match.group(1).strip()
+
+
+def _parse_math(text):
+    return parse(
+        str(text),
+        extraction_config=_MATH_EXTRACT_CONFIG,
+        extraction_mode="first_match",
+        fallback_mode="no_fallback",
+    )
 
 
 def geomverse_doc_to_visual(doc):
@@ -42,8 +49,10 @@ def geomverse_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
 def geomverse_process_results(doc, results):
     tagged_answer = _extract_answer_tag_content(results[0])
-    prediction = _extract_number(tagged_answer) if tagged_answer is not None else None
-    target = float(doc["answer"])
-    if prediction is None:
+    if tagged_answer is None:
         return {"exact_match": 0.0}
-    return {"exact_match": float(abs(prediction - target) < 1e-4)}
+    prediction = _parse_math(tagged_answer)
+    target = _parse_math(doc["answer"])
+    if len(prediction) == 0 or len(target) == 0:
+        return {"exact_match": 0.0}
+    return {"exact_match": float(verify(target, prediction, strict=True))}

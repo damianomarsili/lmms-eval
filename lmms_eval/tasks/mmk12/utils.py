@@ -1,18 +1,31 @@
 import re
 
-_TAGGED_CHOICE_RE = re.compile(r"<answer>\s*([A-E])\s*</answer>", flags=re.IGNORECASE)
-_PREFIXED_CHOICE_RE = re.compile(r"\b(?:answer|option)\s*(?:is\s*)?[:：]?\s*([A-E])\b", flags=re.IGNORECASE)
-_PAREN_CHOICE_RE = re.compile(r"\(([A-E])\)", flags=re.IGNORECASE)
-_BARE_CHOICE_RE = re.compile(r"^\s*([A-E])\s*[\.\)]?\s*$", flags=re.IGNORECASE)
+from lmms_eval.tasks._task_utils.math_verify_utils import (
+    StringExtractionConfig,
+    parse,
+    verify,
+)
+
+_ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.IGNORECASE | re.DOTALL)
+_CHOICE_CONFIG = [StringExtractionConfig(strings=("A", "B", "C", "D", "E"), try_extract_without_anchor=True, lowercase=False)]
 
 
-def _extract_choice(text):
-    text = str(text).strip()
-    for pattern in (_TAGGED_CHOICE_RE, _PREFIXED_CHOICE_RE, _PAREN_CHOICE_RE, _BARE_CHOICE_RE):
-        match = pattern.search(text)
-        if match:
-            return match.group(1).upper()
-    return None
+def _extract_answer_tag_content(text):
+    match = _ANSWER_TAG_RE.search(str(text))
+    if match is None:
+        return None
+    return match.group(1).strip()
+
+
+def _parse_choice(text):
+    tagged = _extract_answer_tag_content(text)
+    text_to_parse = tagged if tagged is not None else str(text)
+    return parse(
+        text_to_parse,
+        extraction_config=_CHOICE_CONFIG,
+        extraction_mode="first_match",
+        fallback_mode="no_fallback",
+    )
 
 
 def mmk12_doc_to_visual(doc):
@@ -30,6 +43,8 @@ def mmk12_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
 
 def mmk12_process_results(doc, results):
-    prediction = _extract_choice(results[0])
-    target = str(doc["answer"]).strip().upper()
-    return {"exact_match": float(prediction == target)}
+    prediction = _parse_choice(results[0])
+    target = _parse_choice(doc["answer"])
+    if len(prediction) == 0 or len(target) == 0:
+        return {"exact_match": 0.0}
+    return {"exact_match": float(verify(target, prediction, strict=True))}
