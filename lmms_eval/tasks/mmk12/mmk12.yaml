@@ -1,0 +1,28 @@
+dataset_path: FanqingM/MMK12
+dataset_kwargs:
+  token: false
+task: "mmk12"
+test_split: test
+output_type: generate_until
+doc_to_visual: !function utils.mmk12_doc_to_visual
+doc_to_text: !function utils.mmk12_doc_to_text
+doc_to_target: "answer"
+process_results: !function utils.mmk12_process_results
+
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: ""
+    post_prompt: "\nAnswer with the option letter only (A, B, C, D, or E)."
+
+generation_kwargs:
+  max_new_tokens: 16
+  temperature: 0
+  do_sample: false
+
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+
+metadata:
+  - version: 0.0
