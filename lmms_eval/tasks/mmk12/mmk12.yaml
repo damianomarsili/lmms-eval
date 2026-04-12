@@ -15,7 +15,7 @@ lmms_eval_specific_kwargs:
     post_prompt: "\nAnswer with the option letter only (A, B, C, D, or E)."
 
 generation_kwargs:
-  max_new_tokens: 65536
+  max_new_tokens: 2048
   temperature: 0
   do_sample: false
 

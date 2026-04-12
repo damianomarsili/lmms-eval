@@ -354,9 +354,9 @@ class VLLM(lmms):
             # The logic here is similar to the vllm implementation as shown here (https://docs.vllm.ai/en/stable/models/generative_models.html#llmchat)
             # - vllm implementation: https://github.com/vllm-project/vllm/blob/d97841078b6e0dde8da36d5a2b8e8857a2c37944/vllm/entrypoints/chat_utils.py#L829
             if self.chat_template is not None:
-                response = self.client.chat(sampling_params=sampling_params, messages=batched_messages, chat_template=self.chat_template)
+                response = self.client.chat(sampling_params=sampling_params, messages=batched_messages, chat_template=self.chat_template, use_tqdm=False)
             else:
-                response = self.client.chat(sampling_params=sampling_params, messages=batched_messages)
+                response = self.client.chat(sampling_params=sampling_params, messages=batched_messages, use_tqdm=False)
             response_text = [o.outputs[0].text for o in response]
 
             assert len(response_text) == len(batch_requests)
