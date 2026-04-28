@@ -102,6 +102,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         verifier_image_side: int = 1024,
         logic_verifier_rounds: int = 2,
         logic_verifier_max_new_tokens: int = 96,
+        logic_verifier_max_step_edits: int = 2,
         generation_max_new_tokens: int = 2048,
         generation_chunk_max_new_tokens: int = 256,
         trust_remote_code: Optional[bool] = True,
@@ -136,6 +137,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         )
         self.logic_verifier_rounds = max(0, int(logic_verifier_rounds))
         self.logic_verifier_max_new_tokens = int(logic_verifier_max_new_tokens)
+        self.logic_verifier_max_step_edits = max(0, int(logic_verifier_max_step_edits))
         self.logic_self_verifier_template = self._load_logic_self_verifier_template(logic_self_verifier_prompt_path)
 
     def _load_logic_self_verifier_template(self, prompt_path: Optional[str]) -> str:
@@ -208,7 +210,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         valid_step_indices = set(self._extract_reason_step_indices(current_answer_output))
 
         for raw_line in cleaned.splitlines():
-            if len(normalized_lines) >= 2:
+            if len(normalized_lines) >= self.logic_verifier_max_step_edits:
                 break
             line = raw_line.strip()
             if not line:
