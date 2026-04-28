@@ -476,9 +476,10 @@ class STTVVLLM(lmms):
                 sampling_params=sampling_params,
                 messages=batched_messages,
                 chat_template=self.chat_template,
+                use_tqdm=False,
             )
         else:
-            response = self.client.chat(sampling_params=sampling_params, messages=batched_messages)
+            response = self.client.chat(sampling_params=sampling_params, messages=batched_messages, use_tqdm=False)
 
         if len(response) != len(batched_messages):
             raise RuntimeError(
@@ -668,9 +669,14 @@ class STTVVLLM(lmms):
         )
         sampling_params = SamplingParams(**params)
         if self.chat_template is not None:
-            response = self.client.chat(sampling_params=sampling_params, messages=messages, chat_template=self.chat_template)
+            response = self.client.chat(
+                sampling_params=sampling_params,
+                messages=messages,
+                chat_template=self.chat_template,
+                use_tqdm=False,
+            )
         else:
-            response = self.client.chat(sampling_params=sampling_params, messages=messages)
+            response = self.client.chat(sampling_params=sampling_params, messages=messages, use_tqdm=False)
         return response[0].outputs[0].text
 
     def _parse_verifier_feedback(self, text: str, entries: List[LocEntry]) -> Tuple[str, str, Dict[str, object]]:
