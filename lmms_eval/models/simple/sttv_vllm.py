@@ -111,6 +111,7 @@ class STTVVLLM(lmms):
         self.chat_template = self._load_chat_template(chat_template)
         self.min_image_pixels = int(min_image_pixels)
         self._enforce_image_resize = self._is_qwen_vl_model(model)
+        self._neutralize_penalties_for_molmo2 = self._is_molmo2_model(model)
 
         accelerator = Accelerator()
         if accelerator.num_processes > 1:
@@ -325,6 +326,9 @@ class STTVVLLM(lmms):
         qwen_vl_patterns = ["qwen2-vl", "qwen2.5-vl", "qwen3-vl"]
         return any(pattern in model.lower() for pattern in qwen_vl_patterns)
 
+    def _is_molmo2_model(self, model: str) -> bool:
+        return "molmo2" in str(model or "").lower()
+
     def _maybe_resize_image(self, img: Image.Image) -> Image.Image:
         if self.min_image_pixels <= 0:
             return img
@@ -403,6 +407,10 @@ class STTVVLLM(lmms):
             params["repetition_penalty"] = float(repetition_penalty)
             params["presence_penalty"] = float(presence_penalty)
             params["frequency_penalty"] = float(frequency_penalty)
+        if self._neutralize_penalties_for_molmo2:
+            params["repetition_penalty"] = 1.0
+            params["presence_penalty"] = 0.0
+            params["frequency_penalty"] = 0.0
         if stop_sequences:
             params["stop"] = stop_sequences
         return params
