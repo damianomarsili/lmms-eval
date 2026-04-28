@@ -3,6 +3,7 @@ import gc
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -311,6 +312,25 @@ class STTVVLLM(lmms):
 
     def _cleanup_after_sample(self) -> None:
         gc.collect()
+
+    def _make_eval_progress_bar(self, total: int) -> tqdm:
+        pbar = tqdm(
+            total=total,
+            disable=(self.rank != 0),
+            desc="STTV queries",
+            unit="query",
+            dynamic_ncols=True,
+            file=sys.stdout,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}, {postfix}]",
+        )
+        if self.rank == 0:
+            pbar.set_postfix_str(f"left={total}", refresh=False)
+        return pbar
+
+    def _advance_eval_progress(self, pbar: tqdm) -> None:
+        pbar.update(1)
+        if self.rank == 0 and pbar.total is not None:
+            pbar.set_postfix_str(f"left={max(0, int(pbar.total) - int(pbar.n))}", refresh=True)
 
     def _load_chat_template(self, chat_template: Optional[str]) -> Optional[str]:
         if chat_template is None:
@@ -1031,7 +1051,7 @@ class STTVVLLM(lmms):
         def _collate(x):
             return -len(x[0]), x[0]
 
-        pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
+        pbar = self._make_eval_progress_bar(len(requests))
         re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
         chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
         self.last_generation_metadata = None
@@ -1067,7 +1087,7 @@ class STTVVLLM(lmms):
                 res.append(answer)
                 all_generation_metadata.append(metadata)
                 self.cache_hook.add_partial("generate_until", (context, gen_kwargs), answer)
-                pbar.update(1)
+                self._advance_eval_progress(pbar)
                 self._cleanup_after_sample()
 
         res = re_ords.get_original(res)

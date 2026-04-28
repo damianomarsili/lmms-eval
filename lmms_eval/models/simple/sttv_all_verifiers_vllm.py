@@ -379,7 +379,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
         def _collate(x):
             return -len(x[0]), x[0]
 
-        pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
+        pbar = self._make_eval_progress_bar(len(requests))
         re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
         chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
         self.last_generation_metadata = None
@@ -416,7 +416,7 @@ class STTVAllVerifiersVLLM(STTVVLLM):
                 res.append(answer)
                 all_generation_metadata.append(metadata)
                 self.cache_hook.add_partial("generate_until", (context, gen_kwargs), answer)
-                pbar.update(1)
+                self._advance_eval_progress(pbar)
                 self._cleanup_after_sample()
 
         res = re_ords.get_original(res)
