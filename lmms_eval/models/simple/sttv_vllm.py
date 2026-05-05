@@ -3,6 +3,7 @@ import gc
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -111,6 +112,7 @@ class STTVVLLM(lmms):
         self.chat_template = self._load_chat_template(chat_template)
         self.min_image_pixels = int(min_image_pixels)
         self._enforce_image_resize = self._is_qwen_vl_model(model)
+        self._neutralize_penalties_for_molmo2 = self._is_molmo2_model(model)
 
         accelerator = Accelerator()
         if accelerator.num_processes > 1:
@@ -311,6 +313,25 @@ class STTVVLLM(lmms):
     def _cleanup_after_sample(self) -> None:
         gc.collect()
 
+    def _make_eval_progress_bar(self, total: int) -> tqdm:
+        pbar = tqdm(
+            total=total,
+            disable=(self.rank != 0),
+            desc="STTV queries",
+            unit="query",
+            dynamic_ncols=True,
+            file=sys.stdout,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}, {postfix}]",
+        )
+        if self.rank == 0:
+            pbar.set_postfix_str(f"left={total}", refresh=False)
+        return pbar
+
+    def _advance_eval_progress(self, pbar: tqdm) -> None:
+        pbar.update(1)
+        if self.rank == 0 and pbar.total is not None:
+            pbar.set_postfix_str(f"left={max(0, int(pbar.total) - int(pbar.n))}", refresh=True)
+
     def _load_chat_template(self, chat_template: Optional[str]) -> Optional[str]:
         if chat_template is None:
             return None
@@ -324,6 +345,9 @@ class STTVVLLM(lmms):
     def _is_qwen_vl_model(self, model: str) -> bool:
         qwen_vl_patterns = ["qwen2-vl", "qwen2.5-vl", "qwen3-vl"]
         return any(pattern in model.lower() for pattern in qwen_vl_patterns)
+
+    def _is_molmo2_model(self, model: str) -> bool:
+        return "molmo2" in str(model or "").lower()
 
     def _maybe_resize_image(self, img: Image.Image) -> Image.Image:
         if self.min_image_pixels <= 0:
@@ -403,6 +427,10 @@ class STTVVLLM(lmms):
             params["repetition_penalty"] = float(repetition_penalty)
             params["presence_penalty"] = float(presence_penalty)
             params["frequency_penalty"] = float(frequency_penalty)
+        if self._neutralize_penalties_for_molmo2:
+            params["repetition_penalty"] = 1.0
+            params["presence_penalty"] = 0.0
+            params["frequency_penalty"] = 0.0
         if stop_sequences:
             params["stop"] = stop_sequences
         return params
@@ -448,9 +476,10 @@ class STTVVLLM(lmms):
                 sampling_params=sampling_params,
                 messages=batched_messages,
                 chat_template=self.chat_template,
+                use_tqdm=False,
             )
         else:
-            response = self.client.chat(sampling_params=sampling_params, messages=batched_messages)
+            response = self.client.chat(sampling_params=sampling_params, messages=batched_messages, use_tqdm=False)
 
         if len(response) != len(batched_messages):
             raise RuntimeError(
@@ -640,9 +669,14 @@ class STTVVLLM(lmms):
         )
         sampling_params = SamplingParams(**params)
         if self.chat_template is not None:
-            response = self.client.chat(sampling_params=sampling_params, messages=messages, chat_template=self.chat_template)
+            response = self.client.chat(
+                sampling_params=sampling_params,
+                messages=messages,
+                chat_template=self.chat_template,
+                use_tqdm=False,
+            )
         else:
-            response = self.client.chat(sampling_params=sampling_params, messages=messages)
+            response = self.client.chat(sampling_params=sampling_params, messages=messages, use_tqdm=False)
         return response[0].outputs[0].text
 
     def _parse_verifier_feedback(self, text: str, entries: List[LocEntry]) -> Tuple[str, str, Dict[str, object]]:
@@ -1023,7 +1057,7 @@ class STTVVLLM(lmms):
         def _collate(x):
             return -len(x[0]), x[0]
 
-        pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
+        pbar = self._make_eval_progress_bar(len(requests))
         re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
         chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
         self.last_generation_metadata = None
@@ -1059,7 +1093,7 @@ class STTVVLLM(lmms):
                 res.append(answer)
                 all_generation_metadata.append(metadata)
                 self.cache_hook.add_partial("generate_until", (context, gen_kwargs), answer)
-                pbar.update(1)
+                self._advance_eval_progress(pbar)
                 self._cleanup_after_sample()
 
         res = re_ords.get_original(res)
