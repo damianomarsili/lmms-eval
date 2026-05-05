@@ -10,7 +10,7 @@ doc_to_target: !function utils.breast_histopathology_doc_to_target
 process_results: !function utils.breast_histopathology_process_results
 
 generation_kwargs:
-  max_new_tokens: 16
+  max_new_tokens: 2048
   temperature: 0
   do_sample: false
 

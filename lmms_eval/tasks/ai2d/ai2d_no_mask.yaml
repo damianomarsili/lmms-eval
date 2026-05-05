@@ -31,7 +31,7 @@ model_specific_target_kwargs:
   qwen_vl: "qa"
 
 generation_kwargs:
-  max_new_tokens: 16
+  max_new_tokens: 2048
   temperature: 0
   do_sample: False
 

@@ -11,6 +11,7 @@ from latex2sympy2_extended.latex2sympy2 import NormalizationConfig
 from loguru import logger as eval_logger
 
 from lmms_eval.llm_judge import ServerConfig, get_server
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_choice_answer, extract_hash_answer
 from lmms_eval.tasks._task_utils.math_verify_utils import (
     ExprExtractionConfig,
     LatexExtractionConfig,
@@ -73,7 +74,7 @@ def mathvision_doc_to_text(doc, lmms_eval_specific_kwargs=None):
         query_prompt += f"{question}\nChoices: {choices_str}" + mc_prompt
     else:
         query_prompt += question
-    return query_prompt
+    return append_hash_answer_instruction(query_prompt)
 
 
 def mathvision_gpt_eval_process_results(doc, results):
@@ -130,12 +131,14 @@ def mathvision_process_results(doc, results):
 
     correct_list = []
     for pred in results:
-        prediction_text = extract_answer_tag_content(pred)
+        hash_answer = extract_hash_answer(pred)
+        prediction_text = hash_answer if hash_answer != str(pred).strip() else extract_answer_tag_content(pred)
         if prediction_text is None:
             prediction_text = pred.strip()
 
         gt_answer = str(doc["answer"]).strip()
         if len(doc["options"]) > 0:
+            prediction_text = extract_choice_answer(prediction_text, valid_choices="".join(chr(ord("A") + i) for i in range(len(doc["options"]))))
             pred_parsed = parse_choice(prediction_text, doc["options"])
             gold_parsed = parse_choice(gt_answer, doc["options"])
         else:

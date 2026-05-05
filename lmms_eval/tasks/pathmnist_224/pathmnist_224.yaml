@@ -10,7 +10,7 @@ doc_to_target: !function utils.pathmnist_224_doc_to_target
 process_results: !function utils.pathmnist_224_process_results
 
 generation_kwargs:
-  max_new_tokens: 64
+  max_new_tokens: 2048
   temperature: 0
   do_sample: false
 

@@ -11,6 +11,7 @@ import yaml
 from loguru import logger as eval_logger
 
 from lmms_eval.tasks._task_utils.file_utils import generate_submission_file
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_choice_answer, extract_hash_answer
 
 with open(Path(__file__).parent / "_default_template_yaml", "r") as f:
     raw_data = f.readlines()
@@ -44,7 +45,7 @@ def construct_prompt(doc, post_prompt="Answer with the option letter from the gi
     parsed_options = parse_options(ast.literal_eval(doc["options"]))
     # parsed_options already prepends a newline so no need to add space here
     question = f"{question}\n{parsed_options}\n\n{post_prompt}"
-    return question
+    return append_hash_answer_instruction(question)
 
 
 def mmmu_pro_doc_to_text(doc, lmms_eval_specific_kwargs=None):
@@ -70,9 +71,10 @@ def mmmu_pro_doc_to_visual(doc):
 
 # MMMU-PRO's all questions are multiple-choice questions
 def mmmu_pro_process_results(doc, results):
-    pred = results[0]
+    pred = extract_hash_answer(results[0])
     if "question" in doc and "options" in doc:
         index2ans, all_choices = get_multi_choice_info(ast.literal_eval(doc["options"]))
+        pred = extract_choice_answer(pred, valid_choices="".join(all_choices))
         parsed_pred = parse_multi_choice_response(pred, all_choices, index2ans)
     else:
         parsed_pred = pred
@@ -82,10 +84,10 @@ def mmmu_pro_process_results(doc, results):
 
 
 def mmmu_pro_composite_process_results(doc, results):
-    pred = results[0]
+    pred = extract_hash_answer(results[0])
     gt_list = ast.literal_eval(doc["answer"])
     # Parse out option letters from the prediction
-    option_letters = re.findall(r"\b[A-Z]\b", pred)
+    option_letters = re.findall(r"\b[A-Z]\b", extract_choice_answer(pred))
 
     cutout_letters = option_letters[: len(gt_list)]
 

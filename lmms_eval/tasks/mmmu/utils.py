@@ -12,6 +12,7 @@ from loguru import logger as eval_logger
 
 from lmms_eval.llm_judge import ServerConfig, get_server
 from lmms_eval.tasks._task_utils.file_utils import generate_submission_file
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_choice_answer, extract_hash_answer
 
 with open(Path(__file__).parent / "_default_template_yaml", "r") as f:
     raw_data = f.readlines()
@@ -58,7 +59,7 @@ def construct_prompt(doc, mc_prompt="", open_ended_prompt="", prompt_type="reaso
     else:
         question = f"{question}\n\n{open_ended_prompt}"
 
-    return question
+    return append_hash_answer_instruction(question)
 
 
 def mmmu_doc_to_text(doc, lmms_eval_specific_kwargs=None):
@@ -101,8 +102,10 @@ def mmmu_doc_to_visual(doc):
 def mmmu_process_results(doc, results):
     parsed_preds = []
     for pred in results:
+        pred = extract_hash_answer(pred)
         if doc["question_type"] == "multiple-choice":
             index2ans, all_choices = get_multi_choice_info(ast.literal_eval(doc["options"]))
+            pred = extract_choice_answer(pred, valid_choices="".join(all_choices))
             parsed_pred = parse_multi_choice_response(pred, all_choices, index2ans)
         else:
             parsed_pred = parse_open_response(pred)
@@ -120,6 +123,7 @@ def mmmu_reasoning_process_results(doc, results):
         formatted_question = construct_prompt(doc)
         # Extract content from <answer> tags if present, handling potential spaces
         answer = doc["answer"]
+        pred = extract_hash_answer(pred)
         if isinstance(pred, str):
             match = re.search(r"<answer>\s*([\s\S]*?)\s*</answer>", pred)
             if match:

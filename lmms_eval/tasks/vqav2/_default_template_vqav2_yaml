@@ -6,7 +6,7 @@ doc_to_visual: !function utils.vqav2_doc_to_visual
 doc_to_text: !function utils.vqav2_doc_to_text
 doc_to_target: "answer"
 generation_kwargs:
-  max_new_tokens: 16
+  max_new_tokens: 2048
 metadata:
   - version: 0.0
 lmms_eval_specific_kwargs:

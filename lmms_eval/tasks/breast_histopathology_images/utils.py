@@ -1,5 +1,7 @@
 import re
 
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_answer_for_target
+
 _YES_NO_RE = re.compile(r"\b(yes|no)\b", flags=re.IGNORECASE)
 
 
@@ -15,7 +17,7 @@ def breast_histopathology_doc_to_visual(doc):
 
 
 def breast_histopathology_doc_to_text(doc, lmms_eval_specific_kwargs=None):
-    return "Is there a Invasive Ductal Carcinoma shown in the image? Answer yes or no"
+    return append_hash_answer_instruction("Is there a Invasive Ductal Carcinoma shown in the image? Answer yes or no")
 
 
 def breast_histopathology_doc_to_target(doc):
@@ -23,6 +25,6 @@ def breast_histopathology_doc_to_target(doc):
 
 
 def breast_histopathology_process_results(doc, results):
-    prediction = _extract_yes_no(results[0])
     target = breast_histopathology_doc_to_target(doc)
+    prediction = _extract_yes_no(extract_answer_for_target(results[0], target))
     return {"exact_match": float(prediction == target)}

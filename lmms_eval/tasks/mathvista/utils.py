@@ -6,6 +6,7 @@ import pandas as pd
 import yaml
 from loguru import logger as eval_logger
 
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_hash_answer
 from lmms_eval.tasks._task_utils.file_utils import generate_submission_file
 from lmms_eval.tasks.mathvista.mathvista_evals import MathVistaEvaluator
 
@@ -46,11 +47,11 @@ def mathvista_doc_to_text(doc, lmms_eval_specific_kwargs=None):
         use_caption=lmms_eval_specific_kwargs["use_caption"],
         use_ocr=lmms_eval_specific_kwargs["use_ocr"],
     )
-    return query_prompt
+    return append_hash_answer_instruction(query_prompt)
 
 
 def mathvista_process_results(doc, results):
-    raw_prediction = results[0].strip()
+    raw_prediction = extract_hash_answer(results[0])
     problem = {
         "question_type": doc["question_type"],
         "answer_type": doc["answer_type"],

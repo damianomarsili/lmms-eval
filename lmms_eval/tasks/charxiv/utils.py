@@ -4,6 +4,7 @@ from lmms_eval.tasks.charxiv.constant import REASONING_RESP_INST
 from lmms_eval.tasks.charxiv.descriptive_utils import descriptive_query_helper
 from lmms_eval.tasks.charxiv.reasoning_utils import get_number_instruction
 from lmms_eval.tasks._task_utils.vqa_eval_metric import EvalAIAnswerProcessor
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_hash_answer
 
 _ANSWER_PROCESSOR = EvalAIAnswerProcessor()
 
@@ -19,7 +20,7 @@ def charxiv_reasoning_doc_to_text_cot(doc, lmms_eval_specific_kwargs=None):
     # 4: number-in-general -> need to specify the number of decimal places
     elif inst_category == 4:
         question = REASONING_RESP_INST[inst_category].format(doc["reasoning_q"], get_number_instruction(doc["reasoning_a"]))
-    return question
+    return append_hash_answer_instruction(question)
 
 
 def charxiv_descriptive_process_docs(dataset: Dataset) -> Dataset:
@@ -47,7 +48,7 @@ def charxiv_descriptive_process_docs(dataset: Dataset) -> Dataset:
 
 
 def charxiv_descriptive_doc_to_text_cot(doc, lmms_eval_specific_kwargs=None):
-    return doc["descriptive_q"]
+    return append_hash_answer_instruction(doc["descriptive_q"])
 
 
 def charxiv_doc_to_visual(doc):
@@ -73,12 +74,12 @@ def charxiv_reasoning_doc_to_messages_cot(doc, lmms_eval_specific_kwargs=None):
 
 
 def charxiv_descriptive_process_results(doc, results):
-    prediction = _normalize_answer(results[0])
+    prediction = _normalize_answer(extract_hash_answer(results[0]))
     target = _normalize_answer(doc["descriptive_a"])
     return {"exact_match": float(prediction == target)}
 
 
 def charxiv_reasoning_process_results(doc, results):
-    prediction = _normalize_answer(results[0])
+    prediction = _normalize_answer(extract_hash_answer(results[0]))
     target = _normalize_answer(doc["reasoning_a"])
     return {"exact_match": float(prediction == target)}

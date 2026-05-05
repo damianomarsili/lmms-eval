@@ -1,6 +1,7 @@
 import re
 
 from huggingface_hub import hf_hub_download
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_hash_answer
 from lmms_eval.tasks._task_utils.math_verify_utils import (
     ExprExtractionConfig,
     parse,
@@ -44,11 +45,13 @@ def geomverse_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
     post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
     question = doc["problem_text"].strip()
-    return f"{pre_prompt}{question}{post_prompt}"
+    return append_hash_answer_instruction(f"{pre_prompt}{question}{post_prompt}")
 
 
 def geomverse_process_results(doc, results):
-    tagged_answer = _extract_answer_tag_content(results[0])
+    tagged_answer = extract_hash_answer(results[0])
+    if tagged_answer == str(results[0]).strip():
+        tagged_answer = _extract_answer_tag_content(results[0])
     if tagged_answer is None:
         return {"exact_match": 0.0}
     prediction = _parse_math(tagged_answer)

@@ -7,6 +7,7 @@ import statistics
 from loguru import logger as eval_logger
 
 import lmms_eval.tasks._task_utils.file_utils as file_utils
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_answer_for_target
 from lmms_eval.tasks._task_utils.vqa_eval_metric import EvalAIAnswerProcessor
 
 
@@ -17,7 +18,8 @@ def vqav2_doc_to_visual(doc):
 def vqav2_process_results(doc, result):
     eval_ai_processor = EvalAIAnswerProcessor()
     assert len(result) == 1, f"The result should be a list of length 1, but got {len(result)}."
-    resAns = result[0]
+    fallback_target = doc["answers"][0]["answer"] if doc.get("answers") else doc.get("answer", "")
+    resAns = extract_answer_for_target(result[0], fallback_target)
     accuracy = 0
 
     if "answers" in doc and doc["answers"] is not None:
@@ -75,7 +77,7 @@ def vqav2_doc_to_text(doc, lmms_eval_specific_kwargs=None):
         pre_prompt = lmms_eval_specific_kwargs["pre_prompt"]
     if "post_prompt" in lmms_eval_specific_kwargs:
         post_prompt = lmms_eval_specific_kwargs["post_prompt"]
-    return f"{pre_prompt}{doc['question']}{post_prompt}"
+    return append_hash_answer_instruction(f"{pre_prompt}{doc['question']}{post_prompt}")
 
 
 def vqav2_aggregate_submissions(results, args):

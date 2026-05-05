@@ -2,6 +2,7 @@ import re
 
 from lmms_eval.filters.extraction import ExtendedRegexFilter
 from lmms_eval.filters.transformation import MapFilter
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_choice_answer
 
 
 def ai2d_doc_to_text(doc, lmms_eval_specific_kwargs=None):
@@ -12,14 +13,14 @@ def ai2d_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     if lmms_eval_specific_kwargs["prompt_format"] == "mcq":
         options = [chr(ord("A") + i) for i in range(len_choices)]
         choices_str = "\n".join([f"{option}. {choice}" for option, choice in zip(options, choices)])
-        return f"{pre_prompt}{question}\n{choices_str}{post_prompt}"
+        return append_hash_answer_instruction(f"{pre_prompt}{question}\n{choices_str}{post_prompt}")
     elif lmms_eval_specific_kwargs["prompt_format"] == "qa":
         options = "\n".join(choices)
-        return f"{pre_prompt}{question}{options}{post_prompt}"
+        return append_hash_answer_instruction(f"{pre_prompt}{question}{options}{post_prompt}")
     elif lmms_eval_specific_kwargs["prompt_format"] == "mcq_xcomposer":
         options = [chr(ord("A") + i) for i in range(len_choices)]
         choices_str = " ".join([f"{option}. {choice}" for option, choice in zip(options, choices)])
-        return f"{pre_prompt}{question}\nContext: N/A\n{choices_str}{post_prompt}"
+        return append_hash_answer_instruction(f"{pre_prompt}{question}\nContext: N/A\n{choices_str}{post_prompt}")
     else:
         raise ValueError(f"Unknown prompt format: {lmms_eval_specific_kwargs['prompt_format']}")
 
@@ -65,6 +66,7 @@ class MultiChoiceRegexFilter(ExtendedRegexFilter):
             # Process each response
             filtered = []
             for resp in r:
+                resp = extract_choice_answer(resp, valid_choices="".join(chr(ord("A") + i) for i in range(len(doc["options"]))))
                 # Try to match the option letter at the start of the response
                 match = option_letter_regex.match(resp)
                 if match:

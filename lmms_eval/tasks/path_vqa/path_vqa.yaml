@@ -15,7 +15,7 @@ lmms_eval_specific_kwargs:
     post_prompt: "\nAnswer with a single word or short phrase."
 
 generation_kwargs:
-  max_new_tokens: 32
+  max_new_tokens: 2048
   temperature: 0
   do_sample: false
 

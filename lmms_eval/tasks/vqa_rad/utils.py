@@ -1,4 +1,5 @@
 from lmms_eval.tasks._task_utils.vqa_eval_metric import EvalAIAnswerProcessor
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_answer_for_target
 
 _ANSWER_PROCESSOR = EvalAIAnswerProcessor()
 
@@ -14,10 +15,10 @@ def vqa_rad_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
     post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
     question = doc["question"].strip()
-    return f"{pre_prompt}{question}{post_prompt}"
+    return append_hash_answer_instruction(f"{pre_prompt}{question}{post_prompt}")
 
 
 def vqa_rad_process_results(doc, results):
-    prediction = _ANSWER_PROCESSOR(results[0].strip())
+    prediction = _ANSWER_PROCESSOR(extract_answer_for_target(results[0], doc["answer"]))
     target = _ANSWER_PROCESSOR(doc["answer"])
     return {"exact_match": float(prediction == target)}

@@ -1,3 +1,6 @@
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_answer_for_target
+
+
 def chartqa_doc_to_visual(doc):
     return [doc["image"].convert("RGB")]
 
@@ -6,11 +9,11 @@ def chartqa_doc_to_text(doc, lmms_eval_specific_kwargs):
     question = doc["question"]
     pre_prompt = lmms_eval_specific_kwargs["pre_prompt"]
     post_prompt = lmms_eval_specific_kwargs["post_prompt"]
-    return f"{pre_prompt}{question}{post_prompt}"
+    return append_hash_answer_instruction(f"{pre_prompt}{question}{post_prompt}")
 
 
 def chartqa_process_results(doc, results):
-    pred = results[0]
+    pred = extract_answer_for_target(results[0], doc["answer"])
     type = doc["type"]
     score = relaxed_correctness(pred, doc["answer"])
     score = 1.0 if score else 0.0

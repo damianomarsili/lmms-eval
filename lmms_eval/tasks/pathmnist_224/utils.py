@@ -1,5 +1,7 @@
 import re
 
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_choice_answer
+
 MEDMNIST_PATH_ID_TO_NAME = {
     0: "adipose",
     1: "background",
@@ -46,7 +48,7 @@ def pathmnist_224_doc_to_visual(doc):
 
 def pathmnist_224_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     options = "\n".join([f"{_INDEX_TO_LETTER[idx]}. {name}" for idx, name in MEDMNIST_PATH_ID_TO_NAME.items()])
-    return (
+    return append_hash_answer_instruction(
         "Which of these options are shown in the image?\n"
         f"{options}\n"
         "Answer with the option letter or exact option text."
@@ -59,6 +61,6 @@ def pathmnist_224_doc_to_target(doc):
 
 
 def pathmnist_224_process_results(doc, results):
-    prediction = _extract_prediction(results[0])
+    prediction = _extract_prediction(extract_choice_answer(results[0], valid_choices="ABCDEFGHI"))
     target = pathmnist_224_doc_to_target(doc)
     return {"exact_match": float(prediction == target)}

@@ -1,5 +1,6 @@
 import re
 
+from lmms_eval.tasks._task_utils.hash_answer import append_hash_answer_instruction, extract_choice_answer
 from lmms_eval.tasks._task_utils.math_verify_utils import (
     StringExtractionConfig,
     parse,
@@ -39,11 +40,11 @@ def mmk12_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
     post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
     question = doc["question"].strip()
-    return f"{pre_prompt}{question}{post_prompt}"
+    return append_hash_answer_instruction(f"{pre_prompt}{question}{post_prompt}")
 
 
 def mmk12_process_results(doc, results):
-    prediction = _parse_choice(results[0])
+    prediction = _parse_choice(extract_choice_answer(results[0], valid_choices="ABCDE"))
     target = _parse_choice(doc["answer"])
     if len(prediction) == 0 or len(target) == 0:
         return {"exact_match": 0.0}
